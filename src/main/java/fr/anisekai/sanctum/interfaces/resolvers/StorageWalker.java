@@ -30,8 +30,8 @@ public interface StorageWalker {
     StorageWalker walk(String into);
 
     /**
-     * Resolves and returns a directory path by name relative to the current root. If the directory does not exist,
-     * implementations may create it.
+     * Resolves and returns a directory path by name relative to the current root. The returned path might point to a non-existing
+     * directory, but will never be a file.
      *
      * @param name
      *         The name of the directory to resolve.

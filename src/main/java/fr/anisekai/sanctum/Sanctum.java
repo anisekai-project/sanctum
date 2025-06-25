@@ -145,7 +145,10 @@ public class Sanctum implements Library {
         }
 
         try {
-            this.walker.directory(store.name());
+            Path path = this.walker.directory(store.name());
+            if (!Files.exists(path)) {
+                SanctumUtils.Action.wrap(() -> Files.createDirectories(path), StorageException::new);
+            }
         } catch (Exception e) {
             throw new StoreRegistrationException(
                     String.format("Store '%s' root directory could not be obtained", store.name()),
@@ -173,6 +176,10 @@ public class Sanctum implements Library {
         IsolationSessionDescriptor storage       = new IsolationSessionDescriptorImpl(name, context);
 
         scopes.forEach(storage::grantScope);
+
+        if (!Files.exists(isolationRoot)) {
+            SanctumUtils.Action.wrap(() -> Files.createDirectories(isolationRoot), StorageException::new);
+        }
 
         this.isolatedStorages.put(name, storage);
         return context;

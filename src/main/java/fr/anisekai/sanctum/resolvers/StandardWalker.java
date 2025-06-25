@@ -27,6 +27,7 @@ public record StandardWalker(Path root) implements StorageWalker {
         if (Files.exists(root) && !Files.isDirectory(root)) {
             throw new StorageException("Directory was expected (Path: " + root + ")");
         }
+        SanctumUtils.Action.wrap(() -> Files.createDirectories(root), StorageException::new);
     }
 
     static Path walk(Path from, String toward) {
@@ -55,12 +56,7 @@ public record StandardWalker(Path root) implements StorageWalker {
 
         Path walked = walk(this.root(), name);
 
-        if (Files.isDirectory(walked)) {
-            return walked;
-        }
-
-        if (Files.notExists(walked)) {
-            SanctumUtils.Action.wrap(() -> Files.createDirectories(walked), StorageException::new);
+        if (Files.isDirectory(walked) || Files.notExists(walked)) {
             return walked;
         }
 
