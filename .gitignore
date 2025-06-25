@@ -1,0 +1,7 @@
+# Gradle exclusion
+.gradle/
+build/
+*.jar
+
+### IntelliJ IDEA ###
+.idea/*.xml
