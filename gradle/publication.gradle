@@ -1,0 +1,46 @@
+publishing {
+    repositories {
+        maven {
+            def releasesRepoUrl = layout.buildDirectory.dir('dist/releases')
+            def snapshotsRepoUrl = layout.buildDirectory.dir('dist/snapshots')
+            url = version.toString().endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
+        }
+    }
+    publications {
+        create("maven", MavenPublication) {
+            artifactId = rootProject.name
+            from components.java
+
+            pom {
+                name = project.name
+                // Read configuration from gradle.properties
+                description = projectDescription
+                url = projectRepository
+
+                licenses {
+                    license {
+                        name = 'Apache License, Version 2.0'
+                        url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+                developers {
+                    developer {
+                        id = developerId
+                        name = developerName
+                        email = developerEmail
+                    }
+                }
+                scm {
+                    def repoUri = new URI(projectRepository)
+                    connection = "scm:git:${repoUri}.git"
+                    developerConnection = "scm:git:ssh://git@${repoUri.host}${repoUri.path}.git"
+                    url = "${projectRepository}/tree/main"
+                }
+            }
+        }
+    }
+}
+
+signing {
+    sign publishing.publications.maven
+}

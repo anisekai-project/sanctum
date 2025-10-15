@@ -1,0 +1,59 @@
+def distributions = ['snapshot', 'release']
+def scopes = ['major', 'minor', 'patch']
+def stages = [
+        beta : 'beta',
+        rc   : 'candidate',
+        final: 'release'
+]
+
+distributions.each { distribution ->
+    tasks.register("zip${distribution.capitalize()}", Zip) {
+        group = "distribution"
+        description = "Zips the ${distribution} artifacts for Maven Central."
+        from layout.buildDirectory.dir("dist/${distribution}s")
+        archiveFileName = "${distribution}-${project.version}.zip"
+        destinationDirectory = layout.buildDirectory.dir('zips')
+    }
+
+    tasks.register("prepare${distribution.capitalize()}") {
+        group = 'distribution'
+        description = "Cleans, publishes, and zips the final ${distribution} artifacts."
+
+        dependsOn tasks.named('clean'), tasks.named('publish'), tasks.named("zip${distribution.capitalize()}")
+    }
+
+}
+
+tasks.named('publish').configure {
+    mustRunAfter tasks.named('clean')
+}
+
+distributions.each { distribution ->
+    tasks.named("zip${distribution.capitalize()}").configure {
+        mustRunAfter tasks.named('publish')
+    }
+}
+
+
+stages.each { stage, name ->
+    scopes.each { scope ->
+        tasks.register("tag${scope.capitalize()}${name.capitalize()}", GradleBuild) {
+            group = "tagging.${name}"
+            description = "Create a version tag (${stage} ${scope})"
+            tasks = ['reckonTagCreate']
+            startParameter.projectProperties = [
+                    'reckon.scope': scope,
+                    'reckon.stage': stage
+            ]
+        }
+    }
+}
+
+tasks.register('dependencyCheckRelease', GradleBuild) {
+    group = 'maintenance'
+    description = 'Checks for dependency updates'
+    tasks = ['dependencyUpdates']
+    startParameter.projectProperties = [
+            'revision': 'release'
+    ]
+}
