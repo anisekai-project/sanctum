@@ -1,31 +1,23 @@
-import java.nio.charset.StandardCharsets
-
 plugins {
     id 'java-library'
     id 'signing'
     id 'maven-publish'
-    id 'com.github.ben-manes.versions' version '0.52.0'
-    id 'org.ajoberstar.reckon' version '0.19.2'
-}
-
-def generalCharset = StandardCharsets.UTF_8.name()
-
-static def isNonStable(String version) {
-    def stableKeyword = ['RELEASE', 'FINAL', 'GA'].any { it -> version.toUpperCase().contains(it) }
-    def regex = /^[0-9,.v-]+(-r)?$/
-    return !stableKeyword && !(version ==~ regex)
+    alias(libs.plugins.catalogUpdater)
+    alias(libs.plugins.reckon)
 }
 
 group = 'fr.anisekai'
 
-compileJava.options.encoding = generalCharset
-compileTestJava.options.encoding = generalCharset
-javadoc.options.encoding = generalCharset
+apply from: 'gradle/java.gradle'
+apply from: 'gradle/reckon.gradle'
+
+project.afterEvaluate {
+    apply from: 'gradle/publication.gradle'
+}
 
 reckon {
     defaultInferredScope = 'patch'
     snapshots()
-
     scopeCalc = calcScopeFromProp() | calcScopeFromCommitMessages()
     stageCalc = calcStageFromProp()
 }
@@ -36,101 +28,14 @@ repositories {
 }
 
 dependencies {
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
+    testImplementation platform(libs.junit.bom)
 
-    implementation group: 'org.jetbrains', name: 'annotations', version: '26.0.2'
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+
+    implementation libs.jetbrains.annotations
 }
 
 test {
     useJUnitPlatform()
-}
-
-dependencyUpdates {
-    rejectVersionIf {
-        isNonStable(it.candidate.version) && !isNonStable(it.currentVersion)
-    }
-}
-
-publishing {
-    repositories {
-        maven {
-            def releasesRepoUrl = layout.buildDirectory.dir('dist/releases')
-            def snapshotsRepoUrl = layout.buildDirectory.dir('dist/snapshots')
-            url = version.toString().endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
-        }
-    }
-    publications {
-        maven(MavenPublication) {
-            artifactId = rootProject.name
-            from components.java
-
-            pom {
-                name = project.name
-                description = 'Sanctum is a library aiming to make management of a folder used as a library easier.'
-
-                url = 'https://github.com/anisekai-project/sanctum'
-
-                licenses {
-                    license {
-                        name = 'Apache License, Version 2.0'
-                        url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
-                    }
-                }
-                developers {
-                    developer {
-                        id = 'alexpado'
-                        name = 'Alexandre PADOVAN'
-                        email = 'contact@alexpado.fr'
-                    }
-                }
-
-                scm {
-                    connection = 'scm:git:github.com/anisekai-project/sanctum.git'
-                    developerConnection = 'scm:git:ssh://github.com/anisekai-project/sanctum.git'
-                    url = 'https://github.com/anisekai-project/sanctum/tree/main'
-                }
-            }
-        }
-    }
-}
-
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
-
-    withJavadocJar()
-    withSourcesJar()
-}
-
-signing {
-    sign publishing.publications.maven
-}
-
-javadoc {
-    if (JavaVersion.current().isJava9Compatible()) {
-        options.addBooleanOption('html5', true)
-    }
-}
-
-tasks.register('zipSnapshot', Zip) {
-    var version = project.version.toString()
-    group = 'distribution'
-    description = 'Zips the snapshot artifacts for Maven Central.'
-    from "$buildDir/dist/snapshots"
-    archiveFileName = "snapshot-${version}.zip"
-    destinationDirectory = file("$buildDir/zips")
-}
-
-tasks.register('zipRelease', Zip) {
-    var version = project.version.toString()
-    group = 'distribution'
-    description = 'Zips the release artifacts for Maven Central.'
-    from "$buildDir/dist/releases"
-    archiveFileName = "release-${version}.zip"
-    destinationDirectory = file("$buildDir/zips")
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.compilerArgs += ['-Xlint:deprecation']
 }
