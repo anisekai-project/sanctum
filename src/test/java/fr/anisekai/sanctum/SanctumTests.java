@@ -1,5 +1,6 @@
 package fr.anisekai.sanctum;
 
+import com.github.f4b6a3.uuid.UuidCreator;
 import fr.anisekai.sanctum.entities.ScopedEntityA;
 import fr.anisekai.sanctum.entities.ScopedEntityB;
 import fr.anisekai.sanctum.enums.StorePolicy;
@@ -25,7 +26,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Collections;
-import java.util.UUID;
 
 @DisplayName("Library Storage")
 @Tags({@Tag("unit-test"), @Tag("library-storage")})
@@ -36,24 +36,24 @@ public class SanctumTests {
     public static final Path TEST_LIBRARY_PATH = TEST_DATA_PATH.resolve("library");
     public static final Path TEST_FILE_PATH    = TEST_DATA_PATH.resolve("file.txt");
 
-    private static String randomName() {
+    private static String randomUUID() {
 
-        return UUID.randomUUID().toString().replace("-", "").toLowerCase();
+        return UuidCreator.getTimeOrderedEpoch().toString();
     }
 
     private static FileStore randomRaw() {
 
-        return new RawStorage(randomName());
+        return new RawStorage(randomUUID());
     }
 
     private static FileStore randomDirStore(Class<? extends ScopedEntity> entityClass) {
 
-        return new ScopedDirectoryStorage(randomName(), entityClass);
+        return new ScopedDirectoryStorage(randomUUID(), entityClass);
     }
 
     private static FileStore randomFileStore(Class<? extends ScopedEntity> entityClass) {
 
-        return new ScopedFileStorage(randomName(), entityClass, "txt");
+        return new ScopedFileStorage(randomUUID(), entityClass, "txt");
     }
 
     @BeforeEach
@@ -275,7 +275,7 @@ public class SanctumTests {
             IsolationSession context = Assertions.assertDoesNotThrow(() -> manager.createIsolation());
 
             try (context) {
-                Path contextPath = TEST_LIBRARY_PATH.resolve("isolation").resolve(context.name());
+                Path contextPath = TEST_LIBRARY_PATH.resolve("isolation").resolve(context.uuid().toString());
                 Assertions.assertTrue(Files.exists(contextPath), contextPath.toString());
             }
         }
@@ -294,7 +294,7 @@ public class SanctumTests {
             IsolationSession context = Assertions.assertDoesNotThrow(() -> manager.createIsolation(scope));
 
             try (context) {
-                Path contextPath = TEST_LIBRARY_PATH.resolve("isolation").resolve(context.name());
+                Path contextPath = TEST_LIBRARY_PATH.resolve("isolation").resolve(context.uuid().toString());
                 Assertions.assertTrue(Files.exists(contextPath), contextPath.toString());
             }
         }

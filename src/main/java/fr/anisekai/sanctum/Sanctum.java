@@ -1,5 +1,6 @@
 package fr.anisekai.sanctum;
 
+import com.github.f4b6a3.uuid.UuidCreator;
 import fr.anisekai.sanctum.enums.StorePolicy;
 import fr.anisekai.sanctum.enums.StoreType;
 import fr.anisekai.sanctum.exceptions.LibraryException;
@@ -40,10 +41,10 @@ public class Sanctum implements Library {
     private static final FileStore STORE_TEMPORARY = new RawStorage("tmp");
     private static final FileStore STORE_ISOLATION = new ScopedDirectoryStorage("isolation", IsolationSession.class);
 
-    private final Path                                    root;
-    private final StorageWalker                           walker;
-    private final Map<String, IsolationSessionDescriptor> isolatedStorages = new HashMap<>();
-    private final Map<FileStore, StorePolicy>             stores           = new HashMap<>();
+    private final Path                                  root;
+    private final StorageWalker                         walker;
+    private final Map<UUID, IsolationSessionDescriptor> isolatedStorages = new HashMap<>();
+    private final Map<FileStore, StorePolicy>           stores           = new HashMap<>();
 
     /**
      * Create a new {@link Sanctum} instance
@@ -64,23 +65,23 @@ public class Sanctum implements Library {
         this.registerStore(STORE_ISOLATION, StorePolicy.PRIVATE);
     }
 
-    private String randomName() {
+    public UUID randomUUID() {
 
-        return UUID.randomUUID().toString().replace("-", "").toLowerCase();
+        return UuidCreator.getTimeOrderedEpoch();
     }
 
     private void checkScopes(Iterable<AccessScope> scopes) {
 
-        Map<AccessScope, String> scopeClaimMap = new HashMap<>();
+        Map<AccessScope, UUID> scopeClaimMap = new HashMap<>();
         for (IsolationSessionDescriptor storage : this.isolatedStorages.values()) {
             for (AccessScope scope : storage.scopes()) {
-                scopeClaimMap.put(scope, storage.name());
+                scopeClaimMap.put(scope, storage.uuid());
             }
         }
 
         for (AccessScope scope : scopes) {
             if (scopeClaimMap.containsKey(scope)) {
-                String claimedBy = scopeClaimMap.get(scope);
+                UUID claimedBy = scopeClaimMap.get(scope);
                 throw new ScopeGrantException(String.format(
                         "Cannot grant %s: The scope is already claimed by the isolated context '%s'",
                         scope,
@@ -100,7 +101,7 @@ public class Sanctum implements Library {
 
     private IsolationSessionDescriptor getIsolatedStorage(IsolationSession context, boolean allowCommitted) {
 
-        String contextIdentifier = context.name();
+        UUID contextIdentifier = context.uuid();
 
         if (!this.isolatedStorages.containsKey(contextIdentifier)) {
             throw new ContextUnavailableException(String.format(
@@ -114,7 +115,7 @@ public class Sanctum implements Library {
         if (storage.isCommitted() && !allowCommitted) {
             throw new ContextUnavailableException(String.format(
                     "The '%s' isolated storage has already been committed.",
-                    storage.name()
+                    storage.uuid()
             ));
         }
 
@@ -125,7 +126,7 @@ public class Sanctum implements Library {
     public Path requestTemporaryFile(IsolationSession context, String extension) {
 
         StorageResolver resolver = this.getResolver(context, STORE_TEMPORARY);
-        return resolver.file(String.format("%s.%s", this.randomName(), extension));
+        return resolver.file(String.format("%s.%s", this.randomUUID(), extension));
     }
 
     @Override
@@ -170,10 +171,10 @@ public class Sanctum implements Library {
 
         this.checkScopes(scopes);
 
-        String                     name          = this.randomName();
-        Path                       isolationRoot = this.walker.walk(STORE_ISOLATION.name()).directory(name);
-        IsolationSession           context       = new IsolationSessionImpl(this, isolationRoot, name);
-        IsolationSessionDescriptor storage       = new IsolationSessionDescriptorImpl(name, context);
+        UUID                       uuid          = this.randomUUID();
+        Path                       isolationRoot = this.walker.walk(STORE_ISOLATION.name()).directory(uuid.toString());
+        IsolationSession           context       = new IsolationSessionImpl(this, isolationRoot, uuid);
+        IsolationSessionDescriptor storage       = new IsolationSessionDescriptorImpl(uuid, context);
 
         scopes.forEach(storage::grantScope);
 
@@ -181,7 +182,7 @@ public class Sanctum implements Library {
             SanctumUtils.Action.wrap(() -> Files.createDirectories(isolationRoot), StorageException::new);
         }
 
-        this.isolatedStorages.put(name, storage);
+        this.isolatedStorages.put(uuid, storage);
         return context;
     }
 
@@ -213,7 +214,7 @@ public class Sanctum implements Library {
 
         Path root = this.walker
                 .walk(STORE_ISOLATION.name())
-                .walk(storage.name())
+                .walk(storage.uuid().toString())
                 .directory(store.name());
 
         return new StandardResolver(root, store, resolverPolicy);
@@ -318,9 +319,9 @@ public class Sanctum implements Library {
     public void discard(IsolationSession context) {
 
         IsolationSessionDescriptor storage = this.getIsolatedStorage(context, true);
-        this.isolatedStorages.remove(storage.name());
+        this.isolatedStorages.remove(storage.uuid());
 
-        Path isolationRoot = this.walker.walk(STORE_ISOLATION.name()).directory(storage.name());
+        Path isolationRoot = this.walker.walk(STORE_ISOLATION.name()).directory(storage.uuid().toString());
 
         try {
             // Remove recursively the isolated context. At that point even if it fails, we already dropped

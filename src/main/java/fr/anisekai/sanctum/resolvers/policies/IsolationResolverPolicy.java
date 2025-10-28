@@ -37,7 +37,7 @@ public record IsolationResolverPolicy(IsolationSessionDescriptor context, FileSt
         throw new ScopeForbiddenException(String.format(
                 "The scope '%s' is not within the allowed grants of the isolation '%s'",
                 scope,
-                this.context().name()
+                this.context().uuid()
         ));
     }
 
@@ -49,7 +49,7 @@ public record IsolationResolverPolicy(IsolationSessionDescriptor context, FileSt
         throw new ScopeForbiddenException(String.format(
                 "The scope '%s' is not within the allowed grants of the isolation '%s'",
                 scope,
-                this.context().name()
+                this.context().uuid()
         ));
     }
 
@@ -61,7 +61,7 @@ public record IsolationResolverPolicy(IsolationSessionDescriptor context, FileSt
         throw new ScopeForbiddenException(String.format(
                 "The scope '%s' is not within the allowed grants of the isolation '%s'",
                 scope,
-                this.context().name()
+                this.context().uuid()
         ));
     }
 

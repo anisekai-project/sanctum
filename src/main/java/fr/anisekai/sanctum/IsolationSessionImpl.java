@@ -6,6 +6,7 @@ import fr.anisekai.sanctum.interfaces.isolation.IsolationSessionAware;
 import fr.anisekai.sanctum.interfaces.resolvers.StorageResolver;
 
 import java.nio.file.Path;
+import java.util.UUID;
 
 /**
  * Default implementation of {@link IsolationSession}
@@ -14,15 +15,15 @@ import java.nio.file.Path;
  *         The {@link IsolationSessionAware} that created this {@link IsolationSession}
  * @param root
  *         The {@link Path} into which this {@link IsolationSession} is located.
- * @param name
- *         The name of this {@link IsolationSession}.
+ * @param uuid
+ *         The uuid of this {@link IsolationSession}.
  */
-public record IsolationSessionImpl(IsolationSessionAware owner, Path root, String name) implements IsolationSession {
+public record IsolationSessionImpl(IsolationSessionAware owner, Path root, UUID uuid) implements IsolationSession {
 
     @Override
     public String getScopedName() {
 
-        return this.name();
+        return this.uuid().toString();
     }
 
     @Override

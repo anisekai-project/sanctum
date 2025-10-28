@@ -3,6 +3,7 @@ package fr.anisekai.sanctum.interfaces.isolation;
 import fr.anisekai.sanctum.AccessScope;
 
 import java.util.Collection;
+import java.util.UUID;
 
 /**
  * Interface allowing to hold metadata about an {@link IsolationSessionDescriptor} that should not be exposed to the
@@ -11,12 +12,12 @@ import java.util.Collection;
 public interface IsolationSessionDescriptor {
 
     /**
-     * Retrieve the name of this {@link IsolationSessionDescriptor}, which is the identifier and isolation directory name of the
+     * Retrieve the uuid of this {@link IsolationSessionDescriptor}, which is the identifier and isolation directory uuid of the
      * {@link IsolationSession}.
      *
-     * @return A name.
+     * @return An uuid.
      */
-    String name();
+    UUID uuid();
 
     /**
      * Retrieve the {@link IsolationSession} associated to this {@link IsolationSessionDescriptor}.

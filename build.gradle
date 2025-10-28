@@ -34,6 +34,7 @@ dependencies {
     testRuntimeOnly libs.junit.platform.launcher
 
     implementation libs.jetbrains.annotations
+    implementation libs.security.uuid
 }
 
 test {

@@ -11,6 +11,7 @@ import fr.anisekai.sanctum.interfaces.StorageAware;
 import fr.anisekai.sanctum.interfaces.resolvers.StorageResolver;
 
 import java.nio.file.Path;
+import java.util.UUID;
 
 /**
  * Interface representing the access to an isolated space that mirrors {@link FileStore} from the main {@link Library}.
@@ -18,11 +19,11 @@ import java.nio.file.Path;
 public interface IsolationSession extends StorageAware, ScopedEntity, AutoCloseable {
 
     /**
-     * Retrieve the name of this {@link IsolationSession}.
+     * Retrieve the uuid of this {@link IsolationSession}.
      *
-     * @return The name
+     * @return The uuid
      */
-    String name();
+    UUID uuid();
 
     /**
      * Retrieve the {@link IsolationSessionAware} instance that created this {@link IsolationSession}.

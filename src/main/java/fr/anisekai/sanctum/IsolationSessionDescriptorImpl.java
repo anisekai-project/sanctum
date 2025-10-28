@@ -3,17 +3,14 @@ package fr.anisekai.sanctum;
 import fr.anisekai.sanctum.interfaces.isolation.IsolationSession;
 import fr.anisekai.sanctum.interfaces.isolation.IsolationSessionDescriptor;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Default implementation of {@link IsolationSessionDescriptor}.
  */
 public class IsolationSessionDescriptorImpl implements IsolationSessionDescriptor {
 
-    private final String           name;
+    private final UUID             uuid;
     private final Set<AccessScope> scopes;
     private final IsolationSession context;
     private       boolean          committed = false;
@@ -21,22 +18,22 @@ public class IsolationSessionDescriptorImpl implements IsolationSessionDescripto
     /**
      * Create a new {@link IsolationSessionDescriptorImpl} instance.
      *
-     * @param name
-     *         The name of this {@link IsolationSessionDescriptor}.
+     * @param uuid
+     *         The uuid of this {@link IsolationSessionDescriptor}.
      * @param context
      *         The {@link IsolationSession} associated to this {@link IsolationSessionDescriptor}.
      */
-    public IsolationSessionDescriptorImpl(String name, IsolationSession context) {
+    public IsolationSessionDescriptorImpl(UUID uuid, IsolationSession context) {
 
-        this.name    = name;
+        this.uuid    = uuid;
         this.scopes  = new HashSet<>();
         this.context = context;
     }
 
     @Override
-    public String name() {
+    public UUID uuid() {
 
-        return this.name;
+        return this.uuid;
     }
 
     @Override
