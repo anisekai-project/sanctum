@@ -1,9 +1,9 @@
 [versions]
-jetbrainsAnnotations = "26.0.2-1"
-junitBom = "6.0.0"
-reckon = "1.0.1"
+jetbrainsAnnotations = "26.1.0"
+junitBom = "6.0.3"
+reckon = "2.0.0"
 uuid-creator = "6.1.1"
-versionCatalogUpdatePlugin = "1.0.1"
+versionCatalogUpdatePlugin = "1.1.0"
 
 [libraries]
 jetbrains-annotations = { module = "org.jetbrains:annotations", version.ref = "jetbrainsAnnotations" }
@@ -13,5 +13,5 @@ junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher
 security-uuid = { module = "com.github.f4b6a3:uuid-creator", version.ref = "uuid-creator" }
 
 [plugins]
-reckon = { id = "org.ajoberstar.reckon", version.ref = "reckon" }
 catalogUpdater = { id = "nl.littlerobots.version-catalog-update", version.ref = "versionCatalogUpdatePlugin" }
+reckon = { id = "org.ajoberstar.reckon", version.ref = "reckon" }
