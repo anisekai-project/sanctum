@@ -98,19 +98,16 @@ public class Sanctum implements Library {
         }
     }
 
+    public IsolationSessionDescriptor getIsolatedStorage(UUID uuid, boolean allowCommitted) {
 
-    private IsolationSessionDescriptor getIsolatedStorage(IsolationSession context, boolean allowCommitted) {
-
-        UUID contextIdentifier = context.uuid();
-
-        if (!this.isolatedStorages.containsKey(contextIdentifier)) {
+        if (!this.isolatedStorages.containsKey(uuid)) {
             throw new ContextUnavailableException(String.format(
                     "The '%s' isolated storage has probably already been discarded.",
-                    contextIdentifier
+                    uuid
             ));
         }
 
-        IsolationSessionDescriptor storage = this.isolatedStorages.get(contextIdentifier);
+        IsolationSessionDescriptor storage = this.isolatedStorages.get(uuid);
 
         if (storage.isCommitted() && !allowCommitted) {
             throw new ContextUnavailableException(String.format(
@@ -120,6 +117,7 @@ public class Sanctum implements Library {
         }
 
         return storage;
+
     }
 
     @Override
@@ -205,7 +203,7 @@ public class Sanctum implements Library {
             ));
         }
 
-        IsolationSessionDescriptor storage = this.getIsolatedStorage(context, false);
+        IsolationSessionDescriptor storage = this.getIsolatedStorage(context.uuid(), false);
 
         ResolverPolicy resolverPolicy = ResolverPolicy.chained(
                 new IsolationResolverPolicy(storage, store),
@@ -223,7 +221,7 @@ public class Sanctum implements Library {
     @Override
     public void requestScope(IsolationSession context, Set<AccessScope> scopes) {
 
-        IsolationSessionDescriptor storage = this.getIsolatedStorage(context, false);
+        IsolationSessionDescriptor storage = this.getIsolatedStorage(context.uuid(), false);
         this.checkScopes(scopes);
         scopes.forEach(storage::grantScope);
     }
@@ -231,7 +229,7 @@ public class Sanctum implements Library {
     @Override
     public void commit(IsolationSession context) {
 
-        IsolationSessionDescriptor storage = this.getIsolatedStorage(context, false);
+        IsolationSessionDescriptor storage = this.getIsolatedStorage(context.uuid(), false);
 
         for (AccessScope scope : storage.scopes()) {
             try {
@@ -318,7 +316,7 @@ public class Sanctum implements Library {
     @Override
     public void discard(IsolationSession context) {
 
-        IsolationSessionDescriptor storage = this.getIsolatedStorage(context, true);
+        IsolationSessionDescriptor storage = this.getIsolatedStorage(context.uuid(), true);
         this.isolatedStorages.remove(storage.uuid());
 
         Path isolationRoot = this.walker.walk(STORE_ISOLATION.name()).directory(storage.uuid().toString());
