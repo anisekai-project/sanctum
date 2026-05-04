@@ -44,7 +44,7 @@ public record AccessScope(FileStore store, ScopedEntity claim) {
             throw new ScopeDefinitionException("Cannot create an access scope targeting a non-scoped store.");
         }
 
-        if (!store.scope().equals(claim.getClass())) {
+        if (!store.scope().isAssignableFrom(claim.getClass())) {
             throw new ScopeDefinitionException(String.format(
                     "Cannot create an access scope using a non compatible scoped entity type on '%s' store.",
                     store.name()
