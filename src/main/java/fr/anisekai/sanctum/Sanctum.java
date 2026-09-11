@@ -366,52 +366,93 @@ public class Sanctum implements Library {
                 storeWalker.file(safeName) :
                 storeWalker.directory(safeName);
 
+        if (store.type() == StoreType.DIRECTORY_SCOPED && policy == StorePolicy.FULL_SWAP) {
+            this.commitSwap(localPath, isolationPath, safeLocalPath);
+        } else if (store.type() == StoreType.DIRECTORY_SCOPED && policy == StorePolicy.OVERWRITE) {
+            this.commitDirectoryOverwrite(localPath, isolationPath, safeLocalPath);
+        } else if (store.type() == StoreType.FILE_SCOPED) {
+            this.commitFileScope(policy, localPath, isolationPath, safeLocalPath);
+        }
+    }
+
+    private void commitFileScope(StorePolicy policy, Path localPath, Path isolationPath, Path safeLocalPath) throws IOException {
+
+        if (!Files.isRegularFile(isolationPath)) {
+            if (policy == StorePolicy.FULL_SWAP) {
+                SanctumUtils.delete(localPath);
+            }
+            return;
+        }
+
+        this.commitSwap(localPath, isolationPath, safeLocalPath);
+    }
+
+    private void commitDirectoryOverwrite(Path localPath, Path isolationPath, Path safeLocalPath) throws IOException {
+
         boolean hasBackup = false;
+        boolean committed = false;
 
         SanctumUtils.delete(safeLocalPath);
 
         if (Files.exists(localPath)) {
-            SanctumUtils.copy(localPath, safeLocalPath);
+            SanctumUtils.copy(localPath, safeLocalPath, StandardCopyOption.COPY_ATTRIBUTES);
             hasBackup = true;
         }
 
         try {
-            if (store.type() == StoreType.DIRECTORY_SCOPED && policy == StorePolicy.FULL_SWAP) {
-                SanctumUtils.delete(localPath);
-                SanctumUtils.copy(isolationPath, localPath, StandardCopyOption.COPY_ATTRIBUTES);
-            } else if (store.type() == StoreType.DIRECTORY_SCOPED && policy == StorePolicy.OVERWRITE) {
-                SanctumUtils.copy(
-                        isolationPath,
-                        localPath,
-                        StandardCopyOption.COPY_ATTRIBUTES,
-                        StandardCopyOption.REPLACE_EXISTING
-                );
-            } else if (store.type() == StoreType.FILE_SCOPED) {
-                if (policy == StorePolicy.FULL_SWAP) {
-                    SanctumUtils.delete(localPath);
-                }
-                if (Files.isRegularFile(isolationPath)) {
-                    SanctumUtils.copy(
-                            isolationPath,
-                            localPath,
-                            StandardCopyOption.COPY_ATTRIBUTES,
-                            StandardCopyOption.REPLACE_EXISTING
-                    );
-                }
-            }
+            SanctumUtils.copy(
+                    isolationPath,
+                    localPath,
+                    StandardCopyOption.COPY_ATTRIBUTES,
+                    StandardCopyOption.REPLACE_EXISTING
+            );
+            committed = true;
         } catch (Exception e) {
-            // Avoid partial commit
-            try {
-                SanctumUtils.delete(localPath);
-                if (hasBackup) Files.move(safeLocalPath, localPath);
-            } catch (Exception recoveryException) {
-                e.addSuppressed(recoveryException);
-            }
-            if (e instanceof IOException ioException) throw ioException;
-            throw new IOException("Failed to commit isolated content.", e);
+            this.rollbackCommit(localPath, safeLocalPath, hasBackup, e);
         } finally {
-            if (hasBackup) SanctumUtils.delete(safeLocalPath);
+            if (committed && hasBackup) {
+                SanctumUtils.delete(safeLocalPath);
+            }
         }
+    }
+
+    private void commitSwap(Path localPath, Path isolationPath, Path safeLocalPath) throws IOException {
+
+        boolean hasBackup = false;
+        boolean committed = false;
+
+        SanctumUtils.delete(safeLocalPath);
+
+        try {
+            if (Files.exists(localPath)) {
+                SanctumUtils.move(localPath, safeLocalPath);
+                hasBackup = true;
+            }
+
+            SanctumUtils.move(isolationPath, localPath);
+            committed = true;
+        } catch (Exception e) {
+            this.rollbackCommit(localPath, safeLocalPath, hasBackup, e);
+        } finally {
+            if (committed && hasBackup) {
+                SanctumUtils.delete(safeLocalPath);
+            }
+        }
+    }
+
+    private void rollbackCommit(Path localPath, Path safeLocalPath, boolean hasBackup, Exception cause) throws IOException {
+
+        try {
+            SanctumUtils.delete(localPath);
+            if (hasBackup) {
+                SanctumUtils.move(safeLocalPath, localPath);
+            }
+        } catch (Exception recoveryException) {
+            cause.addSuppressed(recoveryException);
+        }
+
+        if (cause instanceof IOException ioException) throw ioException;
+        throw new IOException("Failed to commit isolated content.", cause);
     }
 
     @Override

@@ -26,7 +26,7 @@ public final class SanctumUtils {
          * @param action
          *         The {@link Action} to wrap
          * @param exceptionWrapper
-         *         The {@link Function} used to map an exception to a {@link RuntimeException}.
+         *         The {@link Function} used to map the exception to a {@link RuntimeException}.
          */
         static void wrap(Action action, Function<Exception, ? extends RuntimeException> exceptionWrapper) {
 
@@ -91,6 +91,50 @@ public final class SanctumUtils {
         }
 
         throw new UnsupportedOperationException("Unable to delete path: " + path);
+    }
+
+    /**
+     * Move a {@link Path} to another location, preferring an atomic filesystem move when supported.
+     * <p>
+     * If the move cannot be performed directly, the operation falls back to copying and deleting the source to preserve
+     * compatibility with paths located on different filesystems.
+     *
+     * @param source
+     *         The source {@link Path}
+     * @param destination
+     *         The destination {@link Path}
+     *
+     * @throws IOException
+     *         If the move and its fallback both fail.
+     */
+    public static void move(Path source, Path destination) throws IOException {
+
+        IOException atomicFailure;
+        try {
+            Files.move(source, destination, StandardCopyOption.ATOMIC_MOVE);
+            return;
+        } catch (IOException e) {
+            atomicFailure = e;
+        }
+
+        try {
+            Files.move(source, destination);
+            return;
+        } catch (IOException moveFailure) {
+            moveFailure.addSuppressed(atomicFailure);
+
+            if (!Files.exists(source) || Files.exists(destination)) {
+                throw moveFailure;
+            }
+
+            try {
+                copy(source, destination, StandardCopyOption.COPY_ATTRIBUTES);
+                delete(source);
+            } catch (Exception fallbackFailure) {
+                moveFailure.addSuppressed(fallbackFailure);
+                throw moveFailure;
+            }
+        }
     }
 
     /**
