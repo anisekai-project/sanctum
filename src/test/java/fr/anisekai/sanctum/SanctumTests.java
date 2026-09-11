@@ -445,10 +445,15 @@ public class SanctumTests {
             IsolationSession context,
             CountDownLatch ready,
             CountDownLatch start
-    ) throws InterruptedException {
+    ) {
 
         ready.countDown();
-        start.await();
+        try {
+            start.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting to commit", e);
+        }
         context.commit();
     }
 
