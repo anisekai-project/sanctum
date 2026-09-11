@@ -231,6 +231,9 @@ public class Sanctum implements Library {
                 this.reserveScopes(uuid, requestedScopes);
                 try {
                     Path isolationRoot = this.walker.walk(STORE_ISOLATION.name()).directory(uuid.toString());
+                    if (!Files.exists(isolationRoot)) {
+                        SanctumUtils.Action.wrap(() -> Files.createDirectories(isolationRoot), StorageException::new);
+                    }
                     IsolationSession context = new IsolationSessionImpl(this, isolationRoot, uuid);
                     IsolationSessionDescriptor storage = new IsolationSessionDescriptorImpl(uuid, context);
                     requestedScopes.forEach(storage::grantScope);
