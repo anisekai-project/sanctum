@@ -39,6 +39,12 @@ public interface ResolverPolicy {
             }
 
             @Override
+            public void checkResolveFile(String directory, String name) {
+
+                policyChain.forEach(p -> p.checkResolveFile(directory, name));
+            }
+
+            @Override
             public void checkResolveDirectory(ScopedEntity entity) {
 
                 policyChain.forEach(p -> p.checkResolveDirectory(entity));
@@ -73,6 +79,16 @@ public interface ResolverPolicy {
      *         The name of the file being resolved.
      */
     void checkResolveFile(String filename);
+
+    /**
+     * Check if a file can be resolved within a root directory claim.
+     *
+     * @param directory
+     *         The root directory claim.
+     * @param name
+     *         The file name being resolved.
+     */
+    void checkResolveFile(String directory, String name);
 
     /**
      * Check if a directory can be resolved by its matching {@link ScopedEntity}.

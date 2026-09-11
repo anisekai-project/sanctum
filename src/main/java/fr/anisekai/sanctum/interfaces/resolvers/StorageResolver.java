@@ -18,7 +18,8 @@ public interface StorageResolver {
     Path directory();
 
     /**
-     * Try to resolve a {@link Path} pointing to a directory with the provided name.
+     * Try to resolve a {@link Path} pointing to a directory with the provided name. On a directory-scoped store, the name is a
+     * root scope claim. On an unscoped store, it is a regular directory name.
      *
      * @param name
      *         The directory name to resolve.
@@ -28,7 +29,8 @@ public interface StorageResolver {
     Path directory(String name);
 
     /**
-     * Try to resolve a {@link Path} pointing to a file with the provided name.
+     * Try to resolve a {@link Path} pointing to a file with the provided name. On a file-scoped store, the name is a root scope
+     * claim and the store extension is appended automatically. On an unscoped store, it is a regular file name.
      *
      * @param filename
      *         The file name to resolve.
@@ -36,6 +38,18 @@ public interface StorageResolver {
      * @return The {@link Path} pointing to the file.
      */
     Path file(String filename);
+
+    /**
+     * Resolve a file within a root directory of a directory-scoped store.
+     *
+     * @param directory
+     *         The root directory name.
+     * @param filename
+     *         The file name to resolve.
+     *
+     * @return The file path within the scoped directory.
+     */
+    Path file(String directory, String filename);
 
     /**
      * Try to resolve a {@link Path} pointing to the directory of the provided {@link ScopedEntity}.

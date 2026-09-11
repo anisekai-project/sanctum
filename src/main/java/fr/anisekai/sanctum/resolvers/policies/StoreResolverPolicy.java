@@ -1,5 +1,6 @@
 package fr.anisekai.sanctum.resolvers.policies;
 
+import fr.anisekai.sanctum.enums.StoreType;
 import fr.anisekai.sanctum.exceptions.StorageException;
 import fr.anisekai.sanctum.interfaces.FileStore;
 import fr.anisekai.sanctum.interfaces.ScopedEntity;
@@ -17,15 +18,22 @@ public record StoreResolverPolicy(FileStore store) implements ResolverPolicy {
     @Override
     public void checkResolveDirectory(String name) {
 
-        if (!this.store().type().isScoped()) return;
-        throw new StorageException("Tried to resolve a directory on a scoped store.");
+        if (this.store().type() != StoreType.FILE_SCOPED) return;
+        throw new StorageException("Tried to resolve a directory on a file-scoped store.");
     }
 
     @Override
     public void checkResolveFile(String filename) {
 
-        if (!this.store().type().isScoped()) return;
-        throw new StorageException("Tried to resolve a file on a scoped store.");
+        if (this.store().type() != StoreType.DIRECTORY_SCOPED) return;
+        throw new StorageException("Tried to resolve a file on a directory-scoped store.");
+    }
+
+    @Override
+    public void checkResolveFile(String directory, String name) {
+
+        if (this.store().type() == StoreType.DIRECTORY_SCOPED) return;
+        throw new StorageException("Tried to resolve a directory-scoped file on a non-directory-scoped store.");
     }
 
     @Override
