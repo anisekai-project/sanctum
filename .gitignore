@@ -3,5 +3,8 @@
 build/
 *.jar
 
+# Allow gradle-wrapper
+!gradle/wrapper/gradle-wrapper.jar
+
 ### IntelliJ IDEA ###
 .idea/*.xml
