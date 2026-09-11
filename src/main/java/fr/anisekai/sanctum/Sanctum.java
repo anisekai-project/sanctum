@@ -28,23 +28,38 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Collection;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * Default implementation of {@link Library}.
+ * <p>
+ * Instances are safe to use from multiple threads. Operations on different isolation sessions may run concurrently, while
+ * lifecycle operations on the same session are serialized. A scope can only be claimed by one active isolation session.
+ * Paths returned by a resolver remain regular filesystem paths; callers are responsible for coordinating direct filesystem
+ * access performed outside this library.
  */
 public class Sanctum implements Library {
 
     private static final FileStore STORE_TEMPORARY = new RawStorage("tmp");
     private static final FileStore STORE_ISOLATION = new ScopedDirectoryStorage("isolation", IsolationSession.class);
 
-    private final Path                                  root;
-    private final StorageWalker                         walker;
-    private final Map<UUID, IsolationSessionDescriptor> isolatedStorages = new HashMap<>();
-    private final Map<FileStore, StorePolicy>           stores           = new HashMap<>();
+    private final Path                                             root;
+    private final StorageWalker                                    walker;
+    private final ConcurrentMap<UUID, IsolationSessionDescriptor> isolatedStorages = new ConcurrentHashMap<>();
+    private final ConcurrentMap<FileStore, StorePolicy>           stores           = new ConcurrentHashMap<>();
+    private final ConcurrentMap<AccessScope, UUID>                 scopeClaims      = new ConcurrentHashMap<>();
+    private final Lock                                             claimLock         = new ReentrantLock();
+    private final ReentrantReadWriteLock                           lifecycleLock     = new ReentrantReadWriteLock();
+    private final Lock                                             operationLock     = this.lifecycleLock.readLock();
+    private final Lock                                             closeLock         = this.lifecycleLock.writeLock();
+    private volatile boolean                                       closed;
 
     /**
      * Create a new {@link Sanctum} instance
@@ -72,16 +87,9 @@ public class Sanctum implements Library {
 
     private void checkScopes(Iterable<AccessScope> scopes) {
 
-        Map<AccessScope, UUID> scopeClaimMap = new HashMap<>();
-        for (IsolationSessionDescriptor storage : this.isolatedStorages.values()) {
-            for (AccessScope scope : storage.scopes()) {
-                scopeClaimMap.put(scope, storage.uuid());
-            }
-        }
-
         for (AccessScope scope : scopes) {
-            if (scopeClaimMap.containsKey(scope)) {
-                UUID claimedBy = scopeClaimMap.get(scope);
+            UUID claimedBy = this.scopeClaims.get(scope);
+            if (claimedBy != null) {
                 throw new ScopeGrantException(String.format(
                         "Cannot grant %s: The scope is already claimed by the isolated context '%s'",
                         scope,
@@ -89,7 +97,7 @@ public class Sanctum implements Library {
                 ));
             }
 
-            if (!this.hasStore(scope.store())) {
+            if (!this.stores.containsKey(scope.store())) {
                 throw new ScopeGrantException(String.format(
                         "Cannot grant %s: The store targeted is not registered in this library.",
                         scope
@@ -98,16 +106,44 @@ public class Sanctum implements Library {
         }
     }
 
+    private void ensureOpen() {
+
+        if (this.closed) {
+            throw new LibraryException("This library has already been closed.");
+        }
+    }
+
+    private void reserveScopes(UUID uuid, Collection<AccessScope> scopes) {
+
+        this.checkScopes(scopes);
+        scopes.forEach(scope -> this.scopeClaims.put(scope, uuid));
+    }
+
+    private void releaseScopes(IsolationSessionDescriptor storage) {
+
+        storage.scopes().forEach(scope -> this.scopeClaims.remove(scope, storage.uuid()));
+    }
+
     public IsolationSessionDescriptor getIsolatedStorage(UUID uuid, boolean allowCommitted) {
 
-        if (!this.isolatedStorages.containsKey(uuid)) {
+        this.operationLock.lock();
+        try {
+            this.ensureOpen();
+            return this.findIsolatedStorage(uuid, allowCommitted);
+        } finally {
+            this.operationLock.unlock();
+        }
+    }
+
+    private IsolationSessionDescriptor findIsolatedStorage(UUID uuid, boolean allowCommitted) {
+
+        IsolationSessionDescriptor storage = this.isolatedStorages.get(uuid);
+        if (storage == null) {
             throw new ContextUnavailableException(String.format(
                     "The '%s' isolated storage has probably already been discarded.",
                     uuid
             ));
         }
-
-        IsolationSessionDescriptor storage = this.isolatedStorages.get(uuid);
 
         if (storage.isCommitted() && !allowCommitted) {
             throw new ContextUnavailableException(String.format(
@@ -123,123 +159,182 @@ public class Sanctum implements Library {
     @Override
     public Path requestTemporaryFile(IsolationSession context, String extension) {
 
-        StorageResolver resolver = this.getResolver(context, STORE_TEMPORARY);
-        return resolver.file(String.format("%s.%s", this.randomUUID(), extension));
+        this.operationLock.lock();
+        try {
+            this.ensureOpen();
+            StorageResolver resolver = this.getResolver(context, STORE_TEMPORARY);
+            return resolver.file(String.format("%s.%s", this.randomUUID(), extension));
+        } finally {
+            this.operationLock.unlock();
+        }
     }
 
     @Override
     public void registerStore(FileStore store, StorePolicy policy) {
 
-        if (this.hasStore(store)) {
-            throw new StoreRegistrationException(String.format("Store '%s' already exists", store.name()));
-        }
-
-        // Deny policies that can be committed with unscoped stores.
-        if (!store.type().isScoped() && policy.willModifyFilesystem()) {
-            throw new StoreRegistrationException(String.format(
-                    "The '%s' unscoped store cannot be registered under the '%s' policy.",
-                    store.name(),
-                    policy.name()
-            ));
-        }
-
+        this.operationLock.lock();
         try {
-            Path path = this.walker.directory(store.name());
-            if (!Files.exists(path)) {
-                SanctumUtils.Action.wrap(() -> Files.createDirectories(path), StorageException::new);
-            }
-        } catch (Exception e) {
-            throw new StoreRegistrationException(
-                    String.format("Store '%s' root directory could not be obtained", store.name()),
-                    e
-            );
-        }
+            this.ensureOpen();
 
-        this.stores.put(store, policy);
+            // Deny policies that can be committed with unscoped stores.
+            if (!store.type().isScoped() && policy.willModifyFilesystem()) {
+                throw new StoreRegistrationException(String.format(
+                        "The '%s' unscoped store cannot be registered under the '%s' policy.",
+                        store.name(),
+                        policy.name()
+                ));
+            }
+
+            try {
+                Path path = this.walker.directory(store.name());
+                if (!Files.exists(path)) {
+                    SanctumUtils.Action.wrap(() -> Files.createDirectories(path), StorageException::new);
+                }
+            } catch (Exception e) {
+                throw new StoreRegistrationException(
+                        String.format("Store '%s' root directory could not be obtained", store.name()),
+                        e
+                );
+            }
+
+            if (this.stores.putIfAbsent(store, policy) != null) {
+                throw new StoreRegistrationException(String.format("Store '%s' already exists", store.name()));
+            }
+        } finally {
+            this.operationLock.unlock();
+        }
     }
 
     @Override
     public boolean hasStore(FileStore store) {
 
-        return this.stores.containsKey(store);
+        this.operationLock.lock();
+        try {
+            this.ensureOpen();
+            return this.stores.containsKey(store);
+        } finally {
+            this.operationLock.unlock();
+        }
     }
 
     @Override
     public IsolationSession createIsolation(Set<AccessScope> scopes) {
 
-        this.checkScopes(scopes);
+        this.operationLock.lock();
+        try {
+            this.ensureOpen();
+            Set<AccessScope> requestedScopes = Set.copyOf(scopes);
+            UUID uuid = this.randomUUID();
 
-        UUID                       uuid          = this.randomUUID();
-        Path                       isolationRoot = this.walker.walk(STORE_ISOLATION.name()).directory(uuid.toString());
-        IsolationSession           context       = new IsolationSessionImpl(this, isolationRoot, uuid);
-        IsolationSessionDescriptor storage       = new IsolationSessionDescriptorImpl(uuid, context);
-
-        scopes.forEach(storage::grantScope);
-
-        if (!Files.exists(isolationRoot)) {
-            SanctumUtils.Action.wrap(() -> Files.createDirectories(isolationRoot), StorageException::new);
+            this.claimLock.lock();
+            try {
+                this.reserveScopes(uuid, requestedScopes);
+                try {
+                    Path isolationRoot = this.walker.walk(STORE_ISOLATION.name()).directory(uuid.toString());
+                    if (!Files.exists(isolationRoot)) {
+                        SanctumUtils.Action.wrap(() -> Files.createDirectories(isolationRoot), StorageException::new);
+                    }
+                    IsolationSession context = new IsolationSessionImpl(this, isolationRoot, uuid);
+                    IsolationSessionDescriptor storage = new IsolationSessionDescriptorImpl(uuid, context);
+                    requestedScopes.forEach(storage::grantScope);
+                    this.isolatedStorages.put(uuid, storage);
+                    return context;
+                } catch (RuntimeException e) {
+                    requestedScopes.forEach(scope -> this.scopeClaims.remove(scope, uuid));
+                    throw e;
+                }
+            } finally {
+                this.claimLock.unlock();
+            }
+        } finally {
+            this.operationLock.unlock();
         }
-
-        this.isolatedStorages.put(uuid, storage);
-        return context;
     }
 
     @Override
     public StorageResolver getResolver(IsolationSession context, FileStore store) {
 
-        if (!this.hasStore(store)) {
-            throw new StorageException(String.format(
-                    "Store '%s' is not registered in this library",
-                    store.name()
-            ));
+        this.operationLock.lock();
+        try {
+            this.ensureOpen();
+            if (!this.stores.containsKey(store)) {
+                throw new StorageException(String.format(
+                        "Store '%s' is not registered in this library",
+                        store.name()
+                ));
+            }
+
+            StorePolicy policy = this.stores.get(store);
+
+            if (policy == StorePolicy.PRIVATE) {
+                throw new StorageException(String.format(
+                        "Store '%s' cannot be used in a isolation context.",
+                        store.name()
+                ));
+            }
+
+            IsolationSessionDescriptor storage = this.findIsolatedStorage(context.uuid(), false);
+
+            ResolverPolicy resolverPolicy = ResolverPolicy.chained(
+                    new IsolationResolverPolicy(storage, store),
+                    new StoreResolverPolicy(store)
+            );
+
+            Path root = this.walker
+                    .walk(STORE_ISOLATION.name())
+                    .walk(storage.uuid().toString())
+                    .directory(store.name());
+
+            return new StandardResolver(root, store, resolverPolicy);
+        } finally {
+            this.operationLock.unlock();
         }
-
-        StorePolicy policy = this.stores.get(store);
-
-        if (policy == StorePolicy.PRIVATE) {
-            throw new StorageException(String.format(
-                    "Store '%s' cannot be used in a isolation context.",
-                    store.name()
-            ));
-        }
-
-        IsolationSessionDescriptor storage = this.getIsolatedStorage(context.uuid(), false);
-
-        ResolverPolicy resolverPolicy = ResolverPolicy.chained(
-                new IsolationResolverPolicy(storage, store),
-                new StoreResolverPolicy(store)
-        );
-
-        Path root = this.walker
-                .walk(STORE_ISOLATION.name())
-                .walk(storage.uuid().toString())
-                .directory(store.name());
-
-        return new StandardResolver(root, store, resolverPolicy);
     }
 
     @Override
     public void requestScope(IsolationSession context, Set<AccessScope> scopes) {
 
-        IsolationSessionDescriptor storage = this.getIsolatedStorage(context.uuid(), false);
-        this.checkScopes(scopes);
-        scopes.forEach(storage::grantScope);
+        this.operationLock.lock();
+        try {
+            this.ensureOpen();
+            IsolationSessionDescriptor storage = this.findIsolatedStorage(context.uuid(), false);
+            Set<AccessScope> requestedScopes = Set.copyOf(scopes);
+            synchronized (storage) {
+                this.findIsolatedStorage(context.uuid(), false);
+                this.claimLock.lock();
+                try {
+                    this.reserveScopes(storage.uuid(), requestedScopes);
+                    requestedScopes.forEach(storage::grantScope);
+                } finally {
+                    this.claimLock.unlock();
+                }
+            }
+        } finally {
+            this.operationLock.unlock();
+        }
     }
 
     @Override
     public void commit(IsolationSession context) {
 
-        IsolationSessionDescriptor storage = this.getIsolatedStorage(context.uuid(), false);
-
-        for (AccessScope scope : storage.scopes()) {
-            try {
-                this.commitScope(storage, scope);
-            } catch (IOException e) {
-                throw new ContextCommitException(String.format("Failed to commit scope '%s'.", scope), e);
+        this.operationLock.lock();
+        try {
+            this.ensureOpen();
+            IsolationSessionDescriptor storage = this.findIsolatedStorage(context.uuid(), false);
+            synchronized (storage) {
+                this.findIsolatedStorage(context.uuid(), false);
+                for (AccessScope scope : storage.scopes()) {
+                    try {
+                        this.commitScope(storage, scope);
+                    } catch (IOException e) {
+                        throw new ContextCommitException(String.format("Failed to commit scope '%s'.", scope), e);
+                    }
+                }
+                storage.setCommitted(true);
             }
+        } finally {
+            this.operationLock.unlock();
         }
-
-        storage.setCommitted(true);
     }
 
     /**
@@ -306,8 +401,14 @@ public class Sanctum implements Library {
             }
         } catch (Exception e) {
             // Avoid partial commit
-            SanctumUtils.delete(localPath);
-            if (hasBackup) Files.move(safeLocalPath, localPath);
+            try {
+                SanctumUtils.delete(localPath);
+                if (hasBackup) Files.move(safeLocalPath, localPath);
+            } catch (Exception recoveryException) {
+                e.addSuppressed(recoveryException);
+            }
+            if (e instanceof IOException ioException) throw ioException;
+            throw new IOException("Failed to commit isolated content.", e);
         } finally {
             if (hasBackup) SanctumUtils.delete(safeLocalPath);
         }
@@ -316,42 +417,68 @@ public class Sanctum implements Library {
     @Override
     public void discard(IsolationSession context) {
 
-        IsolationSessionDescriptor storage = this.getIsolatedStorage(context.uuid(), true);
-        this.isolatedStorages.remove(storage.uuid());
-
-        Path isolationRoot = this.walker.walk(STORE_ISOLATION.name()).directory(storage.uuid().toString());
-
+        this.operationLock.lock();
         try {
-            // Remove recursively the isolated context. At that point even if it fails, we already dropped
-            // the scopes claims, making the isolation context unusable so it does not matter anymore.
-            SanctumUtils.delete(isolationRoot);
-        } catch (IOException e) {
-            throw new ContextDiscardException(String.format("Failed to discard store '%s'.", isolationRoot), e);
+            this.ensureOpen();
+            IsolationSessionDescriptor storage = this.findIsolatedStorage(context.uuid(), true);
+            synchronized (storage) {
+                this.findIsolatedStorage(context.uuid(), true);
+                this.isolatedStorages.remove(storage.uuid(), storage);
+                this.claimLock.lock();
+                try {
+                    this.releaseScopes(storage);
+                } finally {
+                    this.claimLock.unlock();
+                }
+
+                Path isolationRoot = this.walker.walk(STORE_ISOLATION.name()).directory(storage.uuid().toString());
+                try {
+                    SanctumUtils.delete(isolationRoot);
+                } catch (IOException e) {
+                    throw new ContextDiscardException(String.format("Failed to discard store '%s'.", isolationRoot), e);
+                }
+            }
+        } finally {
+            this.operationLock.unlock();
         }
     }
 
     @Override
     public void close() throws Exception {
 
-        this.isolatedStorages.clear();
-        Path isolationRoot = this.walker.directory(STORE_ISOLATION.name());
-        SanctumUtils.delete(isolationRoot);
+        this.closeLock.lock();
+        try {
+            if (this.closed) return;
+            this.closed = true;
+            this.scopeClaims.clear();
+            this.isolatedStorages.clear();
+            Path isolationRoot = this.walker.directory(STORE_ISOLATION.name());
+            SanctumUtils.delete(isolationRoot);
+        } finally {
+            this.closeLock.unlock();
+        }
     }
 
     @Override
     public StorageResolver getResolver(FileStore store) {
 
-        if (!this.hasStore(store)) {
-            throw new StorageException(String.format(
-                    "Store '%s' is not registered in this library",
-                    store.name()
-            ));
+        this.operationLock.lock();
+        try {
+            this.ensureOpen();
+            if (!this.stores.containsKey(store)) {
+                throw new StorageException(String.format(
+                        "Store '%s' is not registered in this library",
+                        store.name()
+                ));
+            }
+
+            ResolverPolicy resolverPolicy = new StoreResolverPolicy(store);
+
+            Path root = this.walker.directory(store.name());
+            return new StandardResolver(root, store, resolverPolicy);
+        } finally {
+            this.operationLock.unlock();
         }
-
-        ResolverPolicy resolverPolicy = new StoreResolverPolicy(store);
-
-        Path root = this.walker.directory(store.name());
-        return new StandardResolver(root, store, resolverPolicy);
     }
 
 }

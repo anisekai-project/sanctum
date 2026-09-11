@@ -3,7 +3,11 @@ package fr.anisekai.sanctum;
 import fr.anisekai.sanctum.interfaces.isolation.IsolationSession;
 import fr.anisekai.sanctum.interfaces.isolation.IsolationSessionDescriptor;
 
-import java.util.*;
+import java.util.Collection;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Default implementation of {@link IsolationSessionDescriptor}.
@@ -13,7 +17,7 @@ public class IsolationSessionDescriptorImpl implements IsolationSessionDescripto
     private final UUID             uuid;
     private final Set<AccessScope> scopes;
     private final IsolationSession context;
-    private       boolean          committed = false;
+    private volatile boolean       committed = false;
 
     /**
      * Create a new {@link IsolationSessionDescriptorImpl} instance.
@@ -26,7 +30,7 @@ public class IsolationSessionDescriptorImpl implements IsolationSessionDescripto
     public IsolationSessionDescriptorImpl(UUID uuid, IsolationSession context) {
 
         this.uuid    = uuid;
-        this.scopes  = new HashSet<>();
+        this.scopes  = ConcurrentHashMap.newKeySet();
         this.context = context;
     }
 
@@ -45,7 +49,7 @@ public class IsolationSessionDescriptorImpl implements IsolationSessionDescripto
     @Override
     public Collection<AccessScope> scopes() {
 
-        return Collections.unmodifiableCollection(this.scopes);
+        return List.copyOf(this.scopes);
     }
 
     @Override
