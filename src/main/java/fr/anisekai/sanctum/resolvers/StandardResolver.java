@@ -1,5 +1,6 @@
 package fr.anisekai.sanctum.resolvers;
 
+import fr.anisekai.sanctum.enums.StoreType;
 import fr.anisekai.sanctum.interfaces.FileStore;
 import fr.anisekai.sanctum.interfaces.ScopedEntity;
 import fr.anisekai.sanctum.interfaces.resolvers.ResolverPolicy;
@@ -55,29 +56,35 @@ public final class StandardResolver implements StorageResolver {
     public Path file(String filename) {
 
         this.resolverPolicy.checkResolveFile(filename);
-        return this.walker.file(filename);
+        String resolvedName = this.store.type() == StoreType.FILE_SCOPED ?
+                String.format("%s.%s", filename, this.store.extension()) :
+                filename;
+        return this.walker.file(resolvedName);
+    }
+
+    @Override
+    public Path file(String directory, String filename) {
+
+        this.resolverPolicy.checkResolveFile(directory, filename);
+        return this.walker.walk(directory).file(filename);
     }
 
     @Override
     public Path directory(ScopedEntity entity) {
 
-        this.resolverPolicy.checkResolveDirectory(entity);
-        return this.walker.directory(entity.getScopedName());
+        return this.directory(entity == null ? null : entity.getScopedName());
     }
 
     @Override
     public Path file(ScopedEntity entity) {
 
-        this.resolverPolicy.checkResolveFile(entity);
-        String filename = String.format("%s.%s", entity.getScopedName(), this.store.extension());
-        return this.walker.file(filename);
+        return this.file(entity == null ? null : entity.getScopedName());
     }
 
     @Override
     public Path file(ScopedEntity entity, String filename) {
 
-        this.resolverPolicy.checkResolveFile(entity, filename);
-        return this.walker.walk(entity.getScopedName()).file(filename);
+        return this.file(entity == null ? null : entity.getScopedName(), filename);
     }
 
     @Override

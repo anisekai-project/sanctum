@@ -22,47 +22,49 @@ public record IsolationResolverPolicy(IsolationSessionDescriptor context, FileSt
     @Override
     public void checkResolveDirectory(String name) {
 
+        if (!this.store().type().isScoped()) return;
+        this.checkScope(new AccessScope(this.store(), name));
     }
 
     @Override
     public void checkResolveFile(String filename) {
 
+        if (!this.store().type().isScoped()) return;
+        this.checkScope(new AccessScope(this.store(), filename));
+    }
+
+    @Override
+    public void checkResolveFile(String directory, String name) {
+
+        this.checkScope(new AccessScope(this.store(), directory));
+    }
+
+    private void checkScope(AccessScope scope) {
+
+        if (this.context().hasScope(scope)) return;
+        throw new ScopeForbiddenException(String.format(
+                "The scope '%s' is not within the allowed grants of the isolation '%s'",
+                scope,
+                this.context().uuid()
+        ));
     }
 
     @Override
     public void checkResolveDirectory(ScopedEntity entity) {
 
-        AccessScope scope = new AccessScope(this.store(), entity);
-        if (this.context().hasScope(scope)) return;
-        throw new ScopeForbiddenException(String.format(
-                "The scope '%s' is not within the allowed grants of the isolation '%s'",
-                scope,
-                this.context().uuid()
-        ));
+        this.checkResolveDirectory(entity == null ? null : entity.getScopedName());
     }
 
     @Override
     public void checkResolveFile(ScopedEntity entity) {
 
-        AccessScope scope = new AccessScope(this.store(), entity);
-        if (this.context().hasScope(scope)) return;
-        throw new ScopeForbiddenException(String.format(
-                "The scope '%s' is not within the allowed grants of the isolation '%s'",
-                scope,
-                this.context().uuid()
-        ));
+        this.checkResolveFile(entity == null ? null : entity.getScopedName());
     }
 
     @Override
     public void checkResolveFile(ScopedEntity entity, String name) {
 
-        AccessScope scope = new AccessScope(this.store(), entity);
-        if (this.context().hasScope(scope)) return;
-        throw new ScopeForbiddenException(String.format(
-                "The scope '%s' is not within the allowed grants of the isolation '%s'",
-                scope,
-                this.context().uuid()
-        ));
+        this.checkResolveFile(entity == null ? null : entity.getScopedName(), name);
     }
 
 }

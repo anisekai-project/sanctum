@@ -187,13 +187,13 @@ public class SanctumTests {
         ScopedEntity entityA2 = new ScopedEntityA("2");
         ScopedEntity entityB1 = new ScopedEntityB("1");
 
-        AccessScope scopeA1 = new AccessScope(storeA, entityA1);
-        AccessScope scopeA2 = new AccessScope(storeA, entityA2);
-        AccessScope scopeB1 = new AccessScope(storeB, entityB1);
+        AccessScope scopeA1 = new AccessScope(storeA, entityA1.getScopedName());
+        AccessScope scopeA2 = new AccessScope(storeA, entityA2.getScopedName());
+        AccessScope scopeB1 = new AccessScope(storeB, entityB1.getScopedName());
 
-        AccessScope scopeDupeA1 = new AccessScope(storeA, entityA1);
-        AccessScope scopeDupeA2 = new AccessScope(storeA, entityA2);
-        AccessScope scopeDupeB1 = new AccessScope(storeB, entityB1);
+        AccessScope scopeDupeA1 = new AccessScope(storeA, entityA1.getScopedName());
+        AccessScope scopeDupeA2 = new AccessScope(storeA, entityA2.getScopedName());
+        AccessScope scopeDupeB1 = new AccessScope(storeB, entityB1.getScopedName());
 
         Assertions.assertEquals(scopeA1, scopeDupeA1);
         Assertions.assertNotEquals(scopeA1, scopeDupeA2);
@@ -215,24 +215,38 @@ public class SanctumTests {
         FileStore rawStore    = randomRaw();
         FileStore scopedStore = randomDirStore(ScopedEntityA.class);
 
-        ScopedEntity entityA1 = new ScopedEntityA("1");
-        ScopedEntity entityB1 = new ScopedEntityB("1");
-
         ScopeDefinitionException ex;
 
         ex = Assertions.assertThrows(
                 ScopeDefinitionException.class,
-                () -> new AccessScope(rawStore, entityA1)
+                () -> new AccessScope(rawStore, "1")
         );
 
         Assertions.assertTrue(ex.getMessage().contains("non-scoped"), ex.getMessage());
 
-        ex = Assertions.assertThrows(
-                ScopeDefinitionException.class,
-                () -> new AccessScope(scopedStore, entityB1)
-        );
+        Assertions.assertDoesNotThrow(() -> new AccessScope(scopedStore, "1"));
 
-        Assertions.assertTrue(ex.getMessage().contains("non compatible scoped entity type"), ex.getMessage());
+        for (String invalidClaim : new String[]{"", " ", ".", "..", "nested/claim", "nested\\claim"}) {
+            ex = Assertions.assertThrows(
+                    ScopeDefinitionException.class,
+                    () -> new AccessScope(scopedStore, invalidClaim)
+            );
+            Assertions.assertTrue(ex.getMessage().contains("scope name"), ex.getMessage());
+        }
+    }
+
+    @SuppressWarnings("removal")
+    @Test
+    @DisplayName("Access Scope | Legacy entity constructor")
+    public void testAccessScopeLegacyEntityConstructor() {
+
+        FileStore store = randomDirStore(ScopedEntityA.class);
+        ScopedEntity entity = new ScopedEntityB("1");
+
+        Assertions.assertEquals(
+                new AccessScope(store, "1"),
+                new AccessScope(store, entity)
+        );
     }
 
     @Test
@@ -293,7 +307,7 @@ public class SanctumTests {
 
         ScopedEntityA entity = new ScopedEntityA("1");
         FileStore     store  = randomFileStore(ScopedEntityA.class);
-        AccessScope   scope  = new AccessScope(store, entity);
+        AccessScope   scope  = new AccessScope(store, entity.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.OVERWRITE);
@@ -312,7 +326,7 @@ public class SanctumTests {
 
         ScopedEntityA entity = new ScopedEntityA("1");
         FileStore     store  = randomFileStore(ScopedEntityA.class);
-        AccessScope   scope  = new AccessScope(store, entity);
+        AccessScope   scope  = new AccessScope(store, entity.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.OVERWRITE);
@@ -330,7 +344,7 @@ public class SanctumTests {
     public void testConcurrentIsolationScopeClaim() throws Exception {
 
         FileStore store = randomFileStore(ScopedEntityA.class);
-        AccessScope scope = new AccessScope(store, new ScopedEntityA("1"));
+        AccessScope scope = new AccessScope(store, "1");
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH);
              ExecutorService executor = Executors.newFixedThreadPool(2)) {
@@ -382,8 +396,8 @@ public class SanctumTests {
     public void testConcurrentIndependentCommits() throws Exception {
 
         FileStore store = randomFileStore(ScopedEntityA.class);
-        AccessScope scopeA = new AccessScope(store, new ScopedEntityA("A"));
-        AccessScope scopeB = new AccessScope(store, new ScopedEntityA("B"));
+        AccessScope scopeA = new AccessScope(store, "A");
+        AccessScope scopeB = new AccessScope(store, "B");
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH);
              ExecutorService executor = Executors.newFixedThreadPool(2)) {
@@ -464,8 +478,8 @@ public class SanctumTests {
         FileStore     store   = randomFileStore(ScopedEntityA.class);
         ScopedEntityA entityA = new ScopedEntityA("A");
         ScopedEntityA entityB = new ScopedEntityA("B");
-        AccessScope   scopeA  = new AccessScope(store, entityA);
-        AccessScope   scopeB  = new AccessScope(store, entityB);
+        AccessScope   scopeA  = new AccessScope(store, entityA.getScopedName());
+        AccessScope   scopeB  = new AccessScope(store, entityB.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.OVERWRITE);
@@ -493,8 +507,8 @@ public class SanctumTests {
         FileStore     store   = randomFileStore(ScopedEntityA.class);
         ScopedEntityA entityA = new ScopedEntityA("A");
         ScopedEntityA entityB = new ScopedEntityA("B");
-        AccessScope   scopeA  = new AccessScope(store, entityA);
-        AccessScope   scopeB  = new AccessScope(store, entityB);
+        AccessScope   scopeA  = new AccessScope(store, entityA.getScopedName());
+        AccessScope   scopeB  = new AccessScope(store, entityB.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.OVERWRITE);
@@ -514,8 +528,8 @@ public class SanctumTests {
         FileStore     store   = randomFileStore(ScopedEntityA.class);
         ScopedEntityA entityA = new ScopedEntityA("A");
         ScopedEntityA entityB = new ScopedEntityA("B");
-        AccessScope   scopeA  = new AccessScope(store, entityA);
-        AccessScope   scopeB  = new AccessScope(store, entityB);
+        AccessScope   scopeA  = new AccessScope(store, entityA.getScopedName());
+        AccessScope   scopeB  = new AccessScope(store, entityB.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.OVERWRITE);
@@ -541,7 +555,7 @@ public class SanctumTests {
 
         FileStore     store  = randomFileStore(ScopedEntityA.class);
         ScopedEntityA entity = new ScopedEntityA("1");
-        AccessScope   scope  = new AccessScope(store, entity);
+        AccessScope   scope  = new AccessScope(store, entity.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
 
@@ -607,7 +621,7 @@ public class SanctumTests {
 
         FileStore    store  = randomFileStore(ScopedEntityA.class);
         ScopedEntity entity = new ScopedEntityA("1");
-        AccessScope  scope  = new AccessScope(store, entity);
+        AccessScope  scope  = new AccessScope(store, entity.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.OVERWRITE);
@@ -625,7 +639,7 @@ public class SanctumTests {
 
         FileStore    store  = randomDirStore(ScopedEntityA.class);
         ScopedEntity entity = new ScopedEntityA("1");
-        AccessScope  scope  = new AccessScope(store, entity);
+        AccessScope  scope  = new AccessScope(store, entity.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.OVERWRITE);
@@ -643,7 +657,7 @@ public class SanctumTests {
 
         FileStore    store   = randomFileStore(ScopedEntityA.class);
         ScopedEntity entity  = new ScopedEntityA("1");
-        AccessScope  scope   = new AccessScope(store, entity);
+        AccessScope  scope   = new AccessScope(store, entity.getScopedName());
         String       content = "UnitTest";
         byte[]       bytes   = content.getBytes(StandardCharsets.UTF_8);
 
@@ -676,7 +690,7 @@ public class SanctumTests {
 
         FileStore    store   = randomDirStore(ScopedEntityA.class);
         ScopedEntity entity  = new ScopedEntityA("1");
-        AccessScope  scope   = new AccessScope(store, entity);
+        AccessScope  scope   = new AccessScope(store, entity.getScopedName());
         String       content = "UnitTest";
         byte[]       bytes   = content.getBytes(StandardCharsets.UTF_8);
 
@@ -710,7 +724,7 @@ public class SanctumTests {
 
         ScopedEntity entity = new ScopedEntityA("1");
         FileStore    store  = randomDirStore(ScopedEntityA.class);
-        AccessScope  scope  = new AccessScope(store, entity);
+        AccessScope  scope  = new AccessScope(store, entity.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.OVERWRITE);
@@ -755,7 +769,7 @@ public class SanctumTests {
 
         ScopedEntity entity = new ScopedEntityA("1");
         FileStore    store  = randomDirStore(ScopedEntityA.class);
-        AccessScope  scope  = new AccessScope(store, entity);
+        AccessScope  scope  = new AccessScope(store, entity.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.FULL_SWAP);
@@ -798,7 +812,7 @@ public class SanctumTests {
 
         ScopedEntity entity = new ScopedEntityA("1");
         FileStore    store  = randomFileStore(ScopedEntityA.class);
-        AccessScope  scope  = new AccessScope(store, entity);
+        AccessScope  scope  = new AccessScope(store, entity.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.OVERWRITE);
@@ -837,7 +851,7 @@ public class SanctumTests {
 
         ScopedEntity entity = new ScopedEntityA("1");
         FileStore    store  = randomFileStore(ScopedEntityA.class);
-        AccessScope  scope  = new AccessScope(store, entity);
+        AccessScope  scope  = new AccessScope(store, entity.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.OVERWRITE);
@@ -866,7 +880,7 @@ public class SanctumTests {
 
         ScopedEntity entity = new ScopedEntityA("1");
         FileStore    store  = randomFileStore(ScopedEntityA.class);
-        AccessScope  scope  = new AccessScope(store, entity);
+        AccessScope  scope  = new AccessScope(store, entity.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.FULL_SWAP);
@@ -905,7 +919,7 @@ public class SanctumTests {
 
         ScopedEntity entity = new ScopedEntityA("1");
         FileStore    store  = randomFileStore(ScopedEntityA.class);
-        AccessScope  scope  = new AccessScope(store, entity);
+        AccessScope  scope  = new AccessScope(store, entity.getScopedName());
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
             manager.registerStore(store, StorePolicy.FULL_SWAP);
