@@ -26,6 +26,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 @DisplayName("Library Storage")
 @Tags({@Tag("unit-test"), @Tag("library-storage")})
@@ -317,6 +323,133 @@ public class SanctumTests {
                 Assertions.assertTrue(ex.getMessage().contains("scope is already claimed"), ex.getMessage());
             }
         }
+    }
+
+    @Test
+    @DisplayName("Isolation Context | Concurrent scope claim")
+    public void testConcurrentIsolationScopeClaim() throws Exception {
+
+        FileStore store = randomFileStore(ScopedEntityA.class);
+        AccessScope scope = new AccessScope(store, new ScopedEntityA("1"));
+
+        try (Library manager = new Sanctum(TEST_LIBRARY_PATH);
+             ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            manager.registerStore(store, StorePolicy.OVERWRITE);
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch start = new CountDownLatch(1);
+
+            List<Future<IsolationSession>> futures = List.of(
+                    executor.submit(() -> createIsolationConcurrently(manager, scope, ready, start)),
+                    executor.submit(() -> createIsolationConcurrently(manager, scope, ready, start))
+            );
+
+            ready.await();
+            start.countDown();
+
+            int successes = 0;
+            int conflicts = 0;
+            IsolationSession claimedSession = null;
+            for (Future<IsolationSession> future : futures) {
+                try {
+                    claimedSession = future.get();
+                    successes++;
+                } catch (ExecutionException e) {
+                    Assertions.assertInstanceOf(ScopeGrantException.class, e.getCause());
+                    conflicts++;
+                }
+            }
+
+            Assertions.assertEquals(1, successes);
+            Assertions.assertEquals(1, conflicts);
+            if (claimedSession != null) claimedSession.close();
+        }
+    }
+
+    private static IsolationSession createIsolationConcurrently(
+            Library manager,
+            AccessScope scope,
+            CountDownLatch ready,
+            CountDownLatch start
+    ) throws InterruptedException {
+
+        ready.countDown();
+        start.await();
+        return manager.createIsolation(scope);
+    }
+
+    @Test
+    @DisplayName("Isolation Context | Concurrent independent commits")
+    public void testConcurrentIndependentCommits() throws Exception {
+
+        FileStore store = randomFileStore(ScopedEntityA.class);
+        AccessScope scopeA = new AccessScope(store, new ScopedEntityA("A"));
+        AccessScope scopeB = new AccessScope(store, new ScopedEntityA("B"));
+
+        try (Library manager = new Sanctum(TEST_LIBRARY_PATH);
+             ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            manager.registerStore(store, StorePolicy.OVERWRITE);
+            IsolationSession contextA = manager.createIsolation(scopeA);
+            IsolationSession contextB = manager.createIsolation(scopeB);
+            Files.writeString(contextA.resolve(scopeA), "A", StandardOpenOption.CREATE_NEW);
+            Files.writeString(contextB.resolve(scopeB), "B", StandardOpenOption.CREATE_NEW);
+
+            Future<?> commitA = executor.submit(contextA::commit);
+            Future<?> commitB = executor.submit(contextB::commit);
+            commitA.get();
+            commitB.get();
+
+            Assertions.assertEquals("A", Files.readString(manager.resolve(scopeA)));
+            Assertions.assertEquals("B", Files.readString(manager.resolve(scopeB)));
+            contextA.close();
+            contextB.close();
+        }
+    }
+
+    @Test
+    @DisplayName("Isolation Context | Concurrent commit is single-use")
+    public void testConcurrentCommitIsSingleUse() throws Exception {
+
+        try (Library manager = new Sanctum(TEST_LIBRARY_PATH);
+             ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            IsolationSession context = manager.createIsolation();
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch start = new CountDownLatch(1);
+
+            List<Future<?>> futures = List.of(
+                    executor.submit(() -> commitConcurrently(context, ready, start)),
+                    executor.submit(() -> commitConcurrently(context, ready, start))
+            );
+
+            ready.await();
+            start.countDown();
+
+            int successes = 0;
+            int unavailable = 0;
+            for (Future<?> future : futures) {
+                try {
+                    future.get();
+                    successes++;
+                } catch (ExecutionException e) {
+                    Assertions.assertInstanceOf(ContextUnavailableException.class, e.getCause());
+                    unavailable++;
+                }
+            }
+
+            Assertions.assertEquals(1, successes);
+            Assertions.assertEquals(1, unavailable);
+            context.close();
+        }
+    }
+
+    private static void commitConcurrently(
+            IsolationSession context,
+            CountDownLatch ready,
+            CountDownLatch start
+    ) throws InterruptedException {
+
+        ready.countDown();
+        start.await();
+        context.commit();
     }
 
     @Test
