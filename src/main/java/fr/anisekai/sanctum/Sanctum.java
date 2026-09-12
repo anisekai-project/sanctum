@@ -40,27 +40,27 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 /**
  * Default implementation of {@link Library}.
  * <p>
- * Instances are safe to use from multiple threads. Operations on different isolation sessions may run concurrently, while
- * lifecycle operations on the same session are serialized. A scope can only be claimed by one active isolation session.
- * Paths returned by a resolver remain regular filesystem paths; callers are responsible for coordinating direct filesystem
- * access performed outside this library.
+ * Instances are safe to use from multiple threads. Operations on different isolation sessions may run concurrently,
+ * while lifecycle operations on the same session are serialized. A scope can only be claimed by one active isolation
+ * session. Paths returned by a resolver remain regular filesystem paths; callers are responsible for coordinating
+ * direct filesystem access performed outside this library.
  */
 public class Sanctum implements Library {
 
     private static final FileStore STORE_TEMPORARY = new RawStorage("tmp");
     private static final FileStore STORE_ISOLATION = new ScopedDirectoryStorage("isolation", IsolationSession.class);
 
-    private final Path                                             root;
-    private final StorageWalker                                    walker;
-    private final ConcurrentMap<UUID, IsolationSessionDescriptor> isolatedStorages = new ConcurrentHashMap<>();
-    private final ConcurrentMap<FileStore, StorePolicy>           stores           = new ConcurrentHashMap<>();
-    private final ConcurrentMap<Path, FileStore>                   storesByPath     = new ConcurrentHashMap<>();
-    private final ConcurrentMap<AccessScope, UUID>                 scopeClaims      = new ConcurrentHashMap<>();
-    private final Lock                                             claimLock         = new ReentrantLock();
-    private final ReentrantReadWriteLock                           lifecycleLock     = new ReentrantReadWriteLock();
-    private final Lock                                             operationLock     = this.lifecycleLock.readLock();
-    private final Lock                                             closeLock         = this.lifecycleLock.writeLock();
-    private volatile boolean                                       closed;
+    private final    Path                                            root;
+    private final    StorageWalker                                   walker;
+    private final    ConcurrentMap<UUID, IsolationSessionDescriptor> isolatedStorages = new ConcurrentHashMap<>();
+    private final    ConcurrentMap<FileStore, StorePolicy>           stores           = new ConcurrentHashMap<>();
+    private final    ConcurrentMap<Path, FileStore>                  storesByPath     = new ConcurrentHashMap<>();
+    private final    ConcurrentMap<AccessScope, UUID>                scopeClaims      = new ConcurrentHashMap<>();
+    private final    Lock                                            claimLock        = new ReentrantLock();
+    private final    ReentrantReadWriteLock                          lifecycleLock    = new ReentrantReadWriteLock();
+    private final    Lock                                            operationLock    = this.lifecycleLock.readLock();
+    private final    Lock                                            closeLock        = this.lifecycleLock.writeLock();
+    private volatile boolean                                         closed;
 
     /**
      * Create a new {@link Sanctum} instance
@@ -247,7 +247,7 @@ public class Sanctum implements Library {
         try {
             this.ensureOpen();
             Set<AccessScope> requestedScopes = Set.copyOf(scopes);
-            UUID uuid = this.randomUUID();
+            UUID             uuid            = this.randomUUID();
 
             this.claimLock.lock();
             try {
@@ -257,7 +257,7 @@ public class Sanctum implements Library {
                     if (!Files.exists(isolationRoot)) {
                         SanctumUtils.Action.wrap(() -> Files.createDirectories(isolationRoot), StorageException::new);
                     }
-                    IsolationSession context = new IsolationSessionImpl(this, isolationRoot, uuid);
+                    IsolationSession           context = new IsolationSessionImpl(this, isolationRoot, uuid);
                     IsolationSessionDescriptor storage = new IsolationSessionDescriptorImpl(uuid, context);
                     requestedScopes.forEach(storage::grantScope);
                     this.isolatedStorages.put(uuid, storage);
@@ -320,8 +320,8 @@ public class Sanctum implements Library {
         this.operationLock.lock();
         try {
             this.ensureOpen();
-            IsolationSessionDescriptor storage = this.findIsolatedStorage(context.uuid(), false);
-            Set<AccessScope> requestedScopes = Set.copyOf(scopes);
+            IsolationSessionDescriptor storage         = this.findIsolatedStorage(context.uuid(), false);
+            Set<AccessScope>           requestedScopes = Set.copyOf(scopes);
             synchronized (storage) {
                 this.findIsolatedStorage(context.uuid(), false);
                 this.claimLock.lock();
@@ -361,8 +361,8 @@ public class Sanctum implements Library {
     }
 
     /**
-     * Commits the contents of the given {@link IsolationSessionDescriptor} under the {@link AccessScope} to the library, applying
-     * the corresponding {@link FileStore} policies defined in this {@link Sanctum}.
+     * Commits the contents of the given {@link IsolationSessionDescriptor} under the {@link AccessScope} to the
+     * library, applying the corresponding {@link FileStore} policies defined in this {@link Sanctum}.
      *
      * @param storage
      *         The {@link IsolationSessionDescriptor} to commit.
