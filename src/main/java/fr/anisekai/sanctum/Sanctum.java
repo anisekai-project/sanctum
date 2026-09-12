@@ -28,7 +28,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -346,14 +349,20 @@ public class Sanctum implements Library {
             IsolationSessionDescriptor storage = this.findIsolatedStorage(context.uuid(), false);
             synchronized (storage) {
                 this.findIsolatedStorage(context.uuid(), false);
-                for (AccessScope scope : storage.scopes()) {
-                    try {
-                        this.commitScope(storage, scope);
-                    } catch (IOException e) {
-                        throw new ContextCommitException(String.format("Failed to commit scope '%s'.", scope), e);
+                List<CommittedScope> committedScopes = new ArrayList<>();
+                try {
+                    for (AccessScope scope : storage.scopes()) {
+                        CommittedScope committedScope = this.commitScope(storage, scope);
+                        if (committedScope != null) {
+                            committedScopes.add(committedScope);
+                        }
                     }
+                } catch (IOException e) {
+                    this.rollbackSession(committedScopes, e);
+                    throw new ContextCommitException("Failed to commit isolation session; all applied scopes were rolled back.", e);
                 }
                 storage.setCommitted(true);
+                this.cleanupSessionBackups(committedScopes);
             }
         } finally {
             this.operationLock.unlock();
@@ -369,13 +378,13 @@ public class Sanctum implements Library {
      * @param scope
      *         The {@link AccessScope} to commit.
      */
-    private void commitScope(IsolationSessionDescriptor storage, AccessScope scope) throws IOException {
+    private CommittedScope commitScope(IsolationSessionDescriptor storage, AccessScope scope) throws IOException {
 
         FileStore   store  = scope.store();
         StorePolicy policy = this.stores.get(store);
 
-        if (policy == StorePolicy.DISCARD) return;
-        if (!store.type().isScoped()) return;
+        if (policy == StorePolicy.DISCARD) return null;
+        if (!store.type().isScoped()) return null;
 
         StorageWalker storeWalker = this.walker.walk(store.name());
 
@@ -390,30 +399,32 @@ public class Sanctum implements Library {
                 storeWalker.directory(safeName);
 
         if (store.type() == StoreType.DIRECTORY_SCOPED && policy == StorePolicy.FULL_SWAP) {
-            this.commitSwap(localPath, isolationPath, safeLocalPath);
+            return this.commitSwap(localPath, isolationPath, safeLocalPath);
         } else if (store.type() == StoreType.DIRECTORY_SCOPED && policy == StorePolicy.OVERWRITE) {
-            this.commitDirectoryOverwrite(localPath, isolationPath, safeLocalPath);
+            return this.commitDirectoryOverwrite(localPath, isolationPath, safeLocalPath);
         } else if (store.type() == StoreType.FILE_SCOPED) {
-            this.commitFileScope(policy, localPath, isolationPath, safeLocalPath);
+            return this.commitFileScope(policy, localPath, isolationPath, safeLocalPath);
         }
+        return null;
     }
 
-    private void commitFileScope(StorePolicy policy, Path localPath, Path isolationPath, Path safeLocalPath) throws IOException {
+    private CommittedScope commitFileScope(StorePolicy policy, Path localPath, Path isolationPath, Path safeLocalPath) throws IOException {
 
         if (!Files.isRegularFile(isolationPath)) {
             if (policy == StorePolicy.FULL_SWAP) {
-                SanctumUtils.delete(localPath);
+                return this.commitSwap(localPath, isolationPath, safeLocalPath);
             }
-            return;
+            return null;
         }
 
-        this.commitSwap(localPath, isolationPath, safeLocalPath);
+        return this.commitSwap(localPath, isolationPath, safeLocalPath);
     }
 
-    private void commitDirectoryOverwrite(Path localPath, Path isolationPath, Path safeLocalPath) throws IOException {
+    private CommittedScope commitDirectoryOverwrite(Path localPath, Path isolationPath, Path safeLocalPath) throws IOException {
+
+        if (!Files.exists(isolationPath)) return null;
 
         boolean hasBackup = false;
-        boolean committed = false;
 
         SanctumUtils.delete(safeLocalPath);
 
@@ -429,20 +440,16 @@ public class Sanctum implements Library {
                     StandardCopyOption.COPY_ATTRIBUTES,
                     StandardCopyOption.REPLACE_EXISTING
             );
-            committed = true;
+            return new CommittedScope(localPath, safeLocalPath, hasBackup);
         } catch (Exception e) {
             this.rollbackCommit(localPath, safeLocalPath, hasBackup, e);
-        } finally {
-            if (committed && hasBackup) {
-                SanctumUtils.delete(safeLocalPath);
-            }
+            throw new AssertionError("rollbackCommit always throws");
         }
     }
 
-    private void commitSwap(Path localPath, Path isolationPath, Path safeLocalPath) throws IOException {
+    private CommittedScope commitSwap(Path localPath, Path isolationPath, Path safeLocalPath) throws IOException {
 
         boolean hasBackup = false;
-        boolean committed = false;
 
         SanctumUtils.delete(safeLocalPath);
 
@@ -452,14 +459,46 @@ public class Sanctum implements Library {
                 hasBackup = true;
             }
 
-            SanctumUtils.move(isolationPath, localPath);
-            committed = true;
+            if (Files.exists(isolationPath)) {
+                SanctumUtils.move(isolationPath, localPath);
+            }
+            return new CommittedScope(localPath, safeLocalPath, hasBackup);
         } catch (Exception e) {
             this.rollbackCommit(localPath, safeLocalPath, hasBackup, e);
-        } finally {
-            if (committed && hasBackup) {
-                SanctumUtils.delete(safeLocalPath);
+            throw new AssertionError("rollbackCommit always throws");
+        }
+    }
+
+    private void rollbackSession(List<CommittedScope> committedScopes, Exception cause) {
+
+        List<CommittedScope> reverseOrder = new ArrayList<>(committedScopes);
+        Collections.reverse(reverseOrder);
+        for (CommittedScope committedScope : reverseOrder) {
+            try {
+                this.restoreScope(committedScope);
+            } catch (Exception rollbackException) {
+                cause.addSuppressed(rollbackException);
             }
+        }
+    }
+
+    private void cleanupSessionBackups(List<CommittedScope> committedScopes) {
+
+        for (CommittedScope committedScope : committedScopes) {
+            if (!committedScope.hasBackup()) continue;
+            try {
+                SanctumUtils.delete(committedScope.backupPath());
+            } catch (IOException e) {
+                throw new ContextCommitException("The session was committed, but a backup could not be removed.", e);
+            }
+        }
+    }
+
+    private void restoreScope(CommittedScope committedScope) throws IOException {
+
+        SanctumUtils.delete(committedScope.localPath());
+        if (committedScope.hasBackup()) {
+            SanctumUtils.move(committedScope.backupPath(), committedScope.localPath());
         }
     }
 
@@ -477,6 +516,8 @@ public class Sanctum implements Library {
         if (cause instanceof IOException ioException) throw ioException;
         throw new IOException("Failed to commit isolated content.", cause);
     }
+
+    private record CommittedScope(Path localPath, Path backupPath, boolean hasBackup) {}
 
     @Override
     public void discard(IsolationSession context) {

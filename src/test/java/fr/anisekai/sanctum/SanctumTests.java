@@ -8,6 +8,7 @@ import fr.anisekai.sanctum.exceptions.LibraryException;
 import fr.anisekai.sanctum.exceptions.ResolveOutOfBoundException;
 import fr.anisekai.sanctum.exceptions.StorageException;
 import fr.anisekai.sanctum.exceptions.StoreRegistrationException;
+import fr.anisekai.sanctum.exceptions.context.ContextCommitException;
 import fr.anisekai.sanctum.exceptions.context.ContextUnavailableException;
 import fr.anisekai.sanctum.exceptions.scope.ScopeDefinitionException;
 import fr.anisekai.sanctum.exceptions.scope.ScopeGrantException;
@@ -426,6 +427,42 @@ public class SanctumTests {
             Assertions.assertEquals(1, successes);
             Assertions.assertEquals(1, conflicts);
             if (claimedSession != null) claimedSession.close();
+        }
+    }
+
+    @Test
+    @DisplayName("Isolation Context | Failed commit rolls back every scope")
+    public void testFailedCommitRollsBackEveryScope() throws Exception {
+
+        FileStore store = randomDirStore(ScopedEntityA.class);
+        AccessScope scopeA = new AccessScope(store, "A");
+        AccessScope scopeB = new AccessScope(store, "B");
+
+        try (Sanctum manager = new Sanctum(TEST_LIBRARY_PATH)) {
+            manager.registerStore(store, StorePolicy.OVERWRITE);
+            Files.writeString(manager.resolve(scopeA, "value.txt"), "original-A");
+            Files.writeString(manager.resolve(scopeB, "value.txt"), "original-B");
+
+            IsolationSession context = manager.createIsolation(scopeA, scopeB);
+            List<AccessScope> commitOrder = List.copyOf(
+                    manager.getIsolatedStorage(context.uuid(), false).scopes()
+            );
+            AccessScope committedFirst = commitOrder.getFirst();
+            AccessScope failingSecond = commitOrder.getLast();
+
+            Files.writeString(context.resolve(committedFirst, "value.txt"), "changed");
+            Files.writeString(context.resolve(failingSecond), "not-a-directory");
+
+            Assertions.assertThrows(ContextCommitException.class, context::commit);
+            Assertions.assertEquals(
+                    "original-" + committedFirst.claim(),
+                    Files.readString(manager.resolve(committedFirst, "value.txt"))
+            );
+            Assertions.assertEquals(
+                    "original-" + failingSecond.claim(),
+                    Files.readString(manager.resolve(failingSecond, "value.txt"))
+            );
+            context.close();
         }
     }
 
