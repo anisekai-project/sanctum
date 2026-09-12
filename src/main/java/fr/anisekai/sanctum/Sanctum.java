@@ -54,6 +54,7 @@ public class Sanctum implements Library {
     private final StorageWalker                                    walker;
     private final ConcurrentMap<UUID, IsolationSessionDescriptor> isolatedStorages = new ConcurrentHashMap<>();
     private final ConcurrentMap<FileStore, StorePolicy>           stores           = new ConcurrentHashMap<>();
+    private final ConcurrentMap<Path, FileStore>                   storesByPath     = new ConcurrentHashMap<>();
     private final ConcurrentMap<AccessScope, UUID>                 scopeClaims      = new ConcurrentHashMap<>();
     private final Lock                                             claimLock         = new ReentrantLock();
     private final ReentrantReadWriteLock                           lifecycleLock     = new ReentrantReadWriteLock();
@@ -185,12 +186,33 @@ public class Sanctum implements Library {
                 ));
             }
 
+            Path path = null;
             try {
-                Path path = this.walker.directory(store.name());
-                if (!Files.exists(path)) {
-                    SanctumUtils.Action.wrap(() -> Files.createDirectories(path), StorageException::new);
+                Path resolvedPath = this.walker.directory(store.name());
+                path = resolvedPath;
+                FileStore existingStore = this.storesByPath.putIfAbsent(resolvedPath, store);
+                if (existingStore != null) {
+                    if (existingStore.equals(store)) {
+                        throw new StoreRegistrationException(String.format("Store '%s' already exists", store.name()));
+                    }
+                    throw new StoreRegistrationException(String.format(
+                            "Store '%s' conflicts with the already registered store '%s' at '%s'",
+                            store.name(),
+                            existingStore.name(),
+                            resolvedPath
+                    ));
+                }
+
+                if (!Files.exists(resolvedPath)) {
+                    SanctumUtils.Action.wrap(() -> Files.createDirectories(resolvedPath), StorageException::new);
                 }
             } catch (Exception e) {
+                if (path != null) {
+                    this.storesByPath.remove(path, store);
+                }
+                if (e instanceof StoreRegistrationException registrationException) {
+                    throw registrationException;
+                }
                 throw new StoreRegistrationException(
                         String.format("Store '%s' root directory could not be obtained", store.name()),
                         e
@@ -198,6 +220,7 @@ public class Sanctum implements Library {
             }
 
             if (this.stores.putIfAbsent(store, policy) != null) {
+                this.storesByPath.remove(path, store);
                 throw new StoreRegistrationException(String.format("Store '%s' already exists", store.name()));
             }
         } finally {

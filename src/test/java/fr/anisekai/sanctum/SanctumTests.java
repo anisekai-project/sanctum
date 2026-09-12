@@ -112,6 +112,26 @@ public class SanctumTests {
     }
 
     @Test
+    @DisplayName("Store Registration | Physical Path Clash")
+    public void testStoreRegistrationPhysicalPathClash() throws Exception {
+
+        String name = randomUUID();
+        FileStore rawStore = new RawStorage(name);
+        FileStore scopedStore = new ScopedDirectoryStorage(name, ScopedEntityA.class);
+
+        try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
+            manager.registerStore(rawStore, StorePolicy.PRIVATE);
+
+            StoreRegistrationException ex = Assertions.assertThrows(
+                    StoreRegistrationException.class,
+                    () -> manager.registerStore(scopedStore, StorePolicy.OVERWRITE)
+            );
+
+            Assertions.assertTrue(ex.getMessage().contains("already registered store"), ex.getMessage());
+        }
+    }
+
+    @Test
     @DisplayName("Store Registration | Raw Stores policies")
     public void testStoreRegistrationPolicyForRawStores() throws Exception {
 
