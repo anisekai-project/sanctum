@@ -28,15 +28,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -60,7 +56,7 @@ public class Sanctum implements Library {
     private final    ConcurrentMap<Path, FileStore>                  storesByPath     = new ConcurrentHashMap<>();
     private final    ConcurrentMap<AccessScope, UUID>                scopeClaims      = new ConcurrentHashMap<>();
     private final    Lock                                            claimLock        = new ReentrantLock();
-    private final    ReentrantReadWriteLock                          lifecycleLock    = new ReentrantReadWriteLock();
+    private final    ReadWriteLock                                   lifecycleLock    = new ReentrantReadWriteLock();
     private final    Lock                                            operationLock    = this.lifecycleLock.readLock();
     private final    Lock                                            closeLock        = this.lifecycleLock.writeLock();
     private volatile boolean                                         closed;
@@ -359,7 +355,10 @@ public class Sanctum implements Library {
                     }
                 } catch (Exception e) {
                     this.rollbackSession(committedScopes, e);
-                    throw new ContextCommitException("Failed to commit isolation session; all applied scopes were rolled back.", e);
+                    throw new ContextCommitException(
+                            "Failed to commit isolation session; all applied scopes were rolled back.",
+                            e
+                    );
                 }
                 storage.setCommitted(true);
                 this.cleanupSessionBackups(committedScopes);
@@ -517,8 +516,6 @@ public class Sanctum implements Library {
         throw new IOException("Failed to commit isolated content.", cause);
     }
 
-    private record CommittedScope(Path localPath, Path backupPath, boolean hasBackup) {}
-
     @Override
     public void discard(IsolationSession context) {
 
@@ -584,6 +581,10 @@ public class Sanctum implements Library {
         } finally {
             this.operationLock.unlock();
         }
+    }
+
+    private record CommittedScope(Path localPath, Path backupPath, boolean hasBackup) {
+
     }
 
 }
