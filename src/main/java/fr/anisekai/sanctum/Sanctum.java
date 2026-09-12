@@ -357,7 +357,7 @@ public class Sanctum implements Library {
                             committedScopes.add(committedScope);
                         }
                     }
-                } catch (IOException e) {
+                } catch (Exception e) {
                     this.rollbackSession(committedScopes, e);
                     throw new ContextCommitException("Failed to commit isolation session; all applied scopes were rolled back.", e);
                 }
