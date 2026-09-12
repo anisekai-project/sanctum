@@ -27,11 +27,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.*;
 
 @DisplayName("Library Storage")
 @Tags({@Tag("unit-test"), @Tag("library-storage")})
@@ -60,6 +56,34 @@ public class SanctumTests {
     private static FileStore randomFileStore(Class<? extends ScopedEntity> entityClass) {
 
         return new ScopedFileStorage(randomUUID(), entityClass, "txt");
+    }
+
+    private static IsolationSession createIsolationConcurrently(
+            Library manager,
+            AccessScope scope,
+            CountDownLatch ready,
+            CountDownLatch start
+    ) throws InterruptedException {
+
+        ready.countDown();
+        start.await();
+        return manager.createIsolation(scope);
+    }
+
+    private static void commitConcurrently(
+            IsolationSession context,
+            CountDownLatch ready,
+            CountDownLatch start
+    ) {
+
+        ready.countDown();
+        try {
+            start.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting to commit", e);
+        }
+        context.commit();
     }
 
     @BeforeEach
@@ -108,6 +132,26 @@ public class SanctumTests {
             );
 
             Assertions.assertTrue(ex.getMessage().contains("already exists"), ex.getMessage());
+        }
+    }
+
+    @Test
+    @DisplayName("Store Registration | Physical Path Clash")
+    public void testStoreRegistrationPhysicalPathClash() throws Exception {
+
+        String    name        = randomUUID();
+        FileStore rawStore    = new RawStorage(name);
+        FileStore scopedStore = new ScopedDirectoryStorage(name, ScopedEntityA.class);
+
+        try (Library manager = new Sanctum(TEST_LIBRARY_PATH)) {
+            manager.registerStore(rawStore, StorePolicy.PRIVATE);
+
+            StoreRegistrationException ex = Assertions.assertThrows(
+                    StoreRegistrationException.class,
+                    () -> manager.registerStore(scopedStore, StorePolicy.OVERWRITE)
+            );
+
+            Assertions.assertTrue(ex.getMessage().contains("already registered store"), ex.getMessage());
         }
     }
 
@@ -240,7 +284,7 @@ public class SanctumTests {
     @DisplayName("Access Scope | Legacy entity constructor")
     public void testAccessScopeLegacyEntityConstructor() {
 
-        FileStore store = randomDirStore(ScopedEntityA.class);
+        FileStore    store  = randomDirStore(ScopedEntityA.class);
         ScopedEntity entity = new ScopedEntityB("1");
 
         Assertions.assertEquals(
@@ -261,7 +305,10 @@ public class SanctumTests {
                     () -> manager.registerStore(outOfBounds, StorePolicy.PRIVATE)
             );
 
-            ResolveOutOfBoundException roob = Assertions.assertInstanceOf(ResolveOutOfBoundException.class, ex.getCause());
+            ResolveOutOfBoundException roob = Assertions.assertInstanceOf(
+                    ResolveOutOfBoundException.class,
+                    ex.getCause()
+            );
             Assertions.assertTrue(roob.getMessage().contains("out-of-bound"), roob.getMessage());
         }
     }
@@ -333,7 +380,10 @@ public class SanctumTests {
             IsolationSession context = Assertions.assertDoesNotThrow(() -> manager.createIsolation(scope));
 
             try (context) {
-                ScopeGrantException ex = Assertions.assertThrows(ScopeGrantException.class, () -> manager.createIsolation(scope));
+                ScopeGrantException ex = Assertions.assertThrows(
+                        ScopeGrantException.class,
+                        () -> manager.createIsolation(scope)
+                );
                 Assertions.assertTrue(ex.getMessage().contains("scope is already claimed"), ex.getMessage());
             }
         }
@@ -343,7 +393,7 @@ public class SanctumTests {
     @DisplayName("Isolation Context | Concurrent scope claim")
     public void testConcurrentIsolationScopeClaim() throws Exception {
 
-        FileStore store = randomFileStore(ScopedEntityA.class);
+        FileStore   store = randomFileStore(ScopedEntityA.class);
         AccessScope scope = new AccessScope(store, "1");
 
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH);
@@ -360,8 +410,8 @@ public class SanctumTests {
             ready.await();
             start.countDown();
 
-            int successes = 0;
-            int conflicts = 0;
+            int              successes      = 0;
+            int              conflicts      = 0;
             IsolationSession claimedSession = null;
             for (Future<IsolationSession> future : futures) {
                 try {
@@ -379,23 +429,11 @@ public class SanctumTests {
         }
     }
 
-    private static IsolationSession createIsolationConcurrently(
-            Library manager,
-            AccessScope scope,
-            CountDownLatch ready,
-            CountDownLatch start
-    ) throws InterruptedException {
-
-        ready.countDown();
-        start.await();
-        return manager.createIsolation(scope);
-    }
-
     @Test
     @DisplayName("Isolation Context | Concurrent independent commits")
     public void testConcurrentIndependentCommits() throws Exception {
 
-        FileStore store = randomFileStore(ScopedEntityA.class);
+        FileStore   store  = randomFileStore(ScopedEntityA.class);
         AccessScope scopeA = new AccessScope(store, "A");
         AccessScope scopeB = new AccessScope(store, "B");
 
@@ -426,8 +464,8 @@ public class SanctumTests {
         try (Library manager = new Sanctum(TEST_LIBRARY_PATH);
              ExecutorService executor = Executors.newFixedThreadPool(2)) {
             IsolationSession context = manager.createIsolation();
-            CountDownLatch ready = new CountDownLatch(2);
-            CountDownLatch start = new CountDownLatch(1);
+            CountDownLatch   ready   = new CountDownLatch(2);
+            CountDownLatch   start   = new CountDownLatch(1);
 
             List<Future<?>> futures = List.of(
                     executor.submit(() -> commitConcurrently(context, ready, start)),
@@ -437,7 +475,7 @@ public class SanctumTests {
             ready.await();
             start.countDown();
 
-            int successes = 0;
+            int successes   = 0;
             int unavailable = 0;
             for (Future<?> future : futures) {
                 try {
@@ -453,22 +491,6 @@ public class SanctumTests {
             Assertions.assertEquals(1, unavailable);
             context.close();
         }
-    }
-
-    private static void commitConcurrently(
-            IsolationSession context,
-            CountDownLatch ready,
-            CountDownLatch start
-    ) {
-
-        ready.countDown();
-        try {
-            start.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while waiting to commit", e);
-        }
-        context.commit();
     }
 
     @Test
@@ -667,8 +689,12 @@ public class SanctumTests {
             try (IsolationSession context = manager.createIsolation(scope)) {
                 Path output = context.resolve(scope);
 
-                InputStream  is = new ByteArrayInputStream(bytes);
-                OutputStream os = Files.newOutputStream(output, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                InputStream is = new ByteArrayInputStream(bytes);
+                OutputStream os = Files.newOutputStream(
+                        output,
+                        StandardOpenOption.CREATE_NEW,
+                        StandardOpenOption.WRITE
+                );
 
                 try (is; os) {
                     is.transferTo(os);
@@ -700,8 +726,12 @@ public class SanctumTests {
             try (IsolationSession context = manager.createIsolation(scope)) {
                 Path output = context.resolve(scope, "unit.txt");
 
-                InputStream  is = new ByteArrayInputStream(bytes);
-                OutputStream os = Files.newOutputStream(output, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                InputStream is = new ByteArrayInputStream(bytes);
+                OutputStream os = Files.newOutputStream(
+                        output,
+                        StandardOpenOption.CREATE_NEW,
+                        StandardOpenOption.WRITE
+                );
 
                 try (is; os) {
                     is.transferTo(os);
@@ -742,8 +772,12 @@ public class SanctumTests {
             try (IsolationSession context = manager.createIsolation(scope)) {
                 Path output = context.resolve(scope, "replaced.txt");
 
-                InputStream  is = new ByteArrayInputStream(endingContent.getBytes(StandardCharsets.UTF_8));
-                OutputStream os = Files.newOutputStream(output, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                InputStream is = new ByteArrayInputStream(endingContent.getBytes(StandardCharsets.UTF_8));
+                OutputStream os = Files.newOutputStream(
+                        output,
+                        StandardOpenOption.CREATE_NEW,
+                        StandardOpenOption.WRITE
+                );
 
                 try (is; os) {
                     is.transferTo(os);
@@ -787,8 +821,12 @@ public class SanctumTests {
             try (IsolationSession context = manager.createIsolation(scope)) {
                 Path output = context.resolve(scope, "replaced.txt");
 
-                InputStream  is = new ByteArrayInputStream(endingContent.getBytes(StandardCharsets.UTF_8));
-                OutputStream os = Files.newOutputStream(output, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                InputStream is = new ByteArrayInputStream(endingContent.getBytes(StandardCharsets.UTF_8));
+                OutputStream os = Files.newOutputStream(
+                        output,
+                        StandardOpenOption.CREATE_NEW,
+                        StandardOpenOption.WRITE
+                );
 
                 try (is; os) {
                     is.transferTo(os);
@@ -827,8 +865,12 @@ public class SanctumTests {
             try (IsolationSession context = manager.createIsolation(scope)) {
                 Path output = context.resolve(scope);
 
-                InputStream  is = new ByteArrayInputStream(endingContent.getBytes(StandardCharsets.UTF_8));
-                OutputStream os = Files.newOutputStream(output, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                InputStream is = new ByteArrayInputStream(endingContent.getBytes(StandardCharsets.UTF_8));
+                OutputStream os = Files.newOutputStream(
+                        output,
+                        StandardOpenOption.CREATE_NEW,
+                        StandardOpenOption.WRITE
+                );
 
                 try (is; os) {
                     is.transferTo(os);
@@ -895,8 +937,12 @@ public class SanctumTests {
             try (IsolationSession context = manager.createIsolation(scope)) {
                 Path output = context.resolve(scope);
 
-                InputStream  is = new ByteArrayInputStream(endingContent.getBytes(StandardCharsets.UTF_8));
-                OutputStream os = Files.newOutputStream(output, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                InputStream is = new ByteArrayInputStream(endingContent.getBytes(StandardCharsets.UTF_8));
+                OutputStream os = Files.newOutputStream(
+                        output,
+                        StandardOpenOption.CREATE_NEW,
+                        StandardOpenOption.WRITE
+                );
 
                 try (is; os) {
                     is.transferTo(os);
