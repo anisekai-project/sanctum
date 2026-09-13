@@ -1,9 +1,9 @@
 [versions]
 jetbrainsAnnotations = "26.1.0"
-junitBom = "6.0.3"
+junitBom = "6.1.3"
 reckon = "2.0.0"
 uuid-creator = "6.1.1"
-versionCatalogUpdatePlugin = "1.1.0"
+versionCatalogUpdatePlugin = "1.1.1"
 
 [libraries]
 jetbrains-annotations = { module = "org.jetbrains:annotations", version.ref = "jetbrainsAnnotations" }
